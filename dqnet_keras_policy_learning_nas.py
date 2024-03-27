@@ -119,11 +119,11 @@ def create_q_model(num_positions, output_dim):
 
 # The first model makes the predictions for Q-values which are used to
 # make a action.
-model = create_q_model(num_actions, num_positions)
+model = create_q_model(num_positions, num_actions)
 # Build a target model for the prediction of future rewards.
 # The weights of a target model get updated every 10000 steps thus when the
 # loss between the Q-values is calculated the target Q-value is stable.
-model_target = create_q_model(num_actions, num_positions)
+model_target = create_q_model(num_positions, num_actions)
 
 
 model_pos = create_q_model(num_positions, num_positions)
@@ -133,7 +133,7 @@ model_target_pos = create_q_model(num_positions, num_positions)
 # improves training time
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
 optimizer_pos = tf.keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
-env = NASEnvironment(x_train, y_train, x_val, y_val, x_test, y_test, epochs=1, sequence_len=num_positions) #epochs=7
+env = NASEnvironment(x_train, y_train, x_val, y_val, x_test, y_test, epochs=7, sequence_len=num_positions) #epochs=7
 
 # Experience replay buffers
 action_history = []
@@ -245,7 +245,7 @@ while True:  # Run until solved
             # Build the updated Q-values for the sampled future states
             # Use the target model for stability
             print('state_next_sample.shape', state_next_sample.shape)
-            future_rewards = model_target.predict(state_next_sample)
+            future_rewards = model_target.predict(tf.convert_to_tensor(state_next_sample))
             # Q value = reward + discount factor * expected future reward
             updated_q_values = rewards_sample + gamma * tf.reduce_max(
                 future_rewards, axis=1

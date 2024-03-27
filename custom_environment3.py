@@ -6,6 +6,7 @@ from net_builder_googleNet_sequence import *
 from transformer_keras_io import *
 from sklearn.metrics import accuracy_score
 from tensorflow.keras.models import model_from_json
+import pickle
 
 class NASEnvironment(gym.Env):
     def __init__(self, 
@@ -67,13 +68,19 @@ class NASEnvironment(gym.Env):
         #cut state sequence where it meets value
         try:
             cut_index = np.where(self.state == self.cut_value)[0][0]
-            cut_result = self.state[:cut_index-1]
+
+            # Split the array into two parts
+            first_part = self.state[:cut_index]
+            second_part = self.state[cut_index:]
+            
+            # Concatenate the first part with the padded second part
+            self.state = np.concatenate((first_part, np.ones_like(second_part)))
         except:
-            cut_result = self.state
+            self.state = self.state
 
         try:
 
-            model = build_tree_model(self.input_shape, self.num_classes, cut_result, self.max_length, self.vocab_size, self.embedding_dim)
+            model = build_tree_model(self.input_shape, self.num_classes, self.state, self.max_length, self.vocab_size, self.embedding_dim)
             model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
             
             try:
@@ -104,6 +111,10 @@ class NASEnvironment(gym.Env):
                     json_file.write(model_json)
                 model.save('final_model.h5')
                 print(self.state)
+
+                # Pickle the list
+                with open('winner_state.pkl', 'wb') as f:
+                    pickle.dump(self.state, f)
             else:
                 done = False
 
