@@ -1,3 +1,86 @@
+
+import tensorflow as tf
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from sklearn.model_selection import train_test_split
+
+
+import csv
+import pandas as pd
+import numpy as np
+
+# Replace 'your_dataset.csv' with the actual path to your CSV file
+csv_file = 'train_set.csv'
+
+# Load the CSV file into a DataFrame
+df = pd.read_csv(csv_file)
+
+# # Display the DataFrame
+# print(df)
+
+column_name = 'motivo contacto'
+input = df[column_name].tolist()
+
+column_name = 'ultimo algoritmo'
+output = df[column_name].tolist()
+
+import nltk
+from tensorflow.keras.preprocessing.text import Tokenizer
+
+# Get the list of Portuguese stopwords
+stop_words = nltk.corpus.stopwords.words('portuguese')
+
+# Function to preprocess and tokenize text while filtering out stopwords
+def preprocess_text(text):
+    
+    # Remove stopwords
+    filtered_words = [word for word in text if word.lower() not in stop_words]
+    
+    return ' '.join(filtered_words)
+
+# Preprocess the text data
+preprocessed_texts = [preprocess_text(text) for text in input]
+
+
+#output
+
+#categorize output
+from sklearn import preprocessing
+
+
+le = preprocessing.OneHotEncoder()
+categorical_labels = le.fit_transform(np.reshape(output, (-1,1))).toarray()
+
+
+x_train = preprocessed_texts
+total_elems = len(le.categories_[0])
+
+
+# Create tokenizer
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts(preprocessed_texts)
+
+# Convert texts to sequences of integers
+sequences = tokenizer.texts_to_sequences(preprocessed_texts)
+
+max_sequence_length = 150  # Example maximum sequence length
+padded_sequences = pad_sequences(sequences, maxlen=max_sequence_length, padding='post')
+
+from sklearn.model_selection import train_test_split
+import numpy as np
+
+# Split the data into training and testing sets
+x_train, x_test, y_train, y_test = train_test_split(padded_sequences, categorical_labels, test_size=0.2, random_state=42)
+
+# Print the shapes of the resulting datasets
+print("Training data shape:", x_train.shape, y_train.shape)
+print("Testing data shape:", x_test.shape, y_test.shape)
+
+
+# Print information about the datasets
+print(f"Number of training examples: {len(x_train)}")
+print(f"Number of testing examples: {len(x_test)}")
+
+# Define the model
 """
 Title: Actor Critic Method
 Author: [Apoorv Nandan](https://twitter.com/NandanApoorv)
@@ -29,16 +112,17 @@ remains upright. The agent, therefore, must learn to keep the pole from falling 
 ## Setup
 """
 import gym
-from train.rnn_train.gym.envs.custom_environment import NASEnv
-import gym
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+#from custom_environment2 import NASEnvironment
+from custom_environment3 import NASEnvironment
 
-maxlen = 15
-#num_inputs = maxlen
-num_actions = 11
+sequence_len = 15
+maxlen = sequence_len
+num_inputs = maxlen
+num_actions = 3
 num_hidden = 128
 
 
@@ -46,9 +130,15 @@ num_hidden = 128
 seed = 42
 gamma = 0.99  # Discount factor for past rewards
 max_steps_per_episode = 2 #10000
-env = gym.make("NASEnv-v0")
-env.seed(seed)
+env = NASEnvironment(x_train, y_train, x_test, y_test, x_test, y_test, epochs=15, sequence_len=sequence_len)
 eps = np.finfo(np.float32).eps.item()  # Smallest number such that 1.0 + eps != 1.0
+
+
+initial_epsilon = 0.1
+decay_factor = 0.99
+
+eps_action = initial_epsilon
+eps_position = initial_epsilon
 
 """
 ## Implement Actor Critic network
@@ -164,7 +254,6 @@ def build_encoder_model(input_shape, head_size=256, num_heads=4, ff_dim=4, num_t
 
     return keras.Model(inputs, output)
 
-
 #######transformer position############################
 
 def causal_attention_mask(batch_size, n_dest, n_src, dtype):
@@ -247,7 +336,7 @@ def get_vqvae(output_dim, latent_dim=num_hidden, num_embeddings=maxlen, input_sh
     quantized_latents = vq_layer(encoder_outputs)
     common = decoder(quantized_latents)
 
-    action = layers.Dense(output_dim, activation="softmax")(common)
+    action = layers.Dense(output_dim, activation="linear")(common)
     critic = layers.Dense(1)(common)
 
     model = keras.Model(inputs, outputs=[action, critic], name="vq_vae")
@@ -266,9 +355,11 @@ def get_vqvae(output_dim, latent_dim=num_hidden, num_embeddings=maxlen, input_sh
 
 # model = keras.Model(inputs=inputs, outputs=[action, critic])
 
+
+
 model_action = get_vqvae(num_actions)
 
-model_pos = get_vqvae(maxlen)
+model_pos = get_vqvae(sequence_len)
 
 """
 ## Train
@@ -306,41 +397,92 @@ while True:  # Run until solved
 
             # Predict action probabilities and estimated future rewards
             # from environment state
-            action_probs, critic_value = model_action(state)
-            position_probs, critic_pos = model_pos(state)
+            logits, critic_value = model_action(state)
+            position_logits, critic_pos = model_pos(state)
+
+            action_probs_history.append(logits)
+            position_probs_history.append(position_logits)
 
             critic_value_history.append(critic_value)
             critic_pos_value_history.append(critic_pos)
 
-            # Sample action from action probability distribution
-            action = np.random.choice(num_actions, p=np.squeeze(action_probs))
-            #action_probs_history.append(tf.math.log(action_probs[0, action]))
-            action_probs_history.append(action_probs)
+            #choose action
+            prob = np.random.rand()
+            if prob < eps_action:
+                # Exploration: choose a random action
+                action = np.random.choice(sequence_len)
 
-            #position
-            position = np.random.choice(maxlen, p=np.squeeze(position_probs))
-            #position_probs_history.append(tf.math.log(position_probs[0, position]))
-            position_probs_history.append(position_probs)
+                
+            else:
+                # Exploitation: choose the action with the highest estimated value
+                # eps
+                action_probs = np.exp(logits) / np.sum(np.exp(logits), axis=-1)
+
+                # Sample action from action probability distribution
+                action = np.random.choice(num_actions, p=np.squeeze(action_probs))
+
+                #action_probs_history.append(action_probs)
+
+            #choose position
+            prob = np.random.rand()
+            if prob < eps_position:
+                # Exploration: choose a random action
+                position = np.random.choice(maxlen)
+
+                position_probs_history.append(prob)
+            else:
+                # Exploitation: choose the action with the highest estimated value
+                # eps
+                position_probs = np.exp(position_logits) / np.sum(np.exp(position_logits), axis=-1)
+
+                # Sample action from action probability distribution
+                position = np.random.choice(maxlen, p=np.squeeze(position_probs))
+
+                #position_probs_history.append(position_probs)
 
             # Apply the sampled action in our environment
             state, reward, done, _ = env.step( (action, position) )
 
+            # if reward < 20:
+            #     eps_action = min(0.5, eps_action + 0.1)
+            # else:
+            #     eps_action = max(0.1, eps_action - 0.1)            
+            # eps_position = eps_action
+
+            eps_action *= decay_factor
+            eps_action = max(eps_action, 0.05)
+            eps_position = eps_action
+
+
             next_state = state
-            next_state[position] = action
+            #next_state[position] = action
 
             #print("***********************************next state", next_state) 
 
-            with tape_action.stop_recording(), tape_pos.stop_recording():
-                next_state = tf.expand_dims(tf.convert_to_tensor(next_state), axis=0)
-                action_probs_next, critic_value_next = model_action(next_state)
-                position_probs_next, critic_pos_next = model_pos(next_state)
+            # with tape_action.stop_recording(), tape_pos.stop_recording():
+            #     next_state = tf.expand_dims(tf.convert_to_tensor(next_state), axis=0)
+            #     action_probs_next, critic_value_next = model_action(next_state)
+            #     position_probs_next, critic_pos_next = model_pos(next_state)
 
-            action_probs_history_next.append(action_probs_next)
-            position_probs_history_next.append(position_probs_next)
+            # action_probs_next, critic_value_next = tf.stop_gradient(model_action(np.expand_dims(next_state, axis=0)))
+            # position_probs_next, critic_pos_next = tf.stop_gradient(model_pos(np.expand_dims(next_state, axis=0)))
+            with tape_action.stop_recording(), tape_pos.stop_recording():
+                action_next = model_action(tf.convert_to_tensor(tf.expand_dims(next_state, axis=0)))
+                action_logits_next, critic_value_next = action_next
+
+                action_probs_next = np.exp(action_logits_next) / np.sum(np.exp(action_logits_next), axis=-1)
+
+
+                position_next = model_pos(tf.convert_to_tensor(tf.expand_dims(next_state, axis=0)))
+                position_logits_next, critic_pos_next = position_next
+
+                position_probs_next = np.exp(position_logits_next) / np.sum(np.exp(position_logits_next), axis=-1)
+
+            action_probs_history_next.append(action_logits_next)
+            position_probs_history_next.append(position_logits_next)
             critic_value_history_next.append(critic_value_next)
             critic_pos_value_history_next.append(critic_pos_next)
 
-            reward = reward*100
             rewards_history.append(reward)
             episode_reward += reward
 

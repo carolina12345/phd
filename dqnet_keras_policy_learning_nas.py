@@ -4,16 +4,82 @@ from tensorflow.keras.datasets import imdb
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
 
-# Load the IMDb dataset
-(x_train, y_train), (x_test, y_test) = imdb.load_data(num_words=10000)
+import tensorflow as tf
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+from sklearn.model_selection import train_test_split
 
-x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=42)
 
-# Pad sequences to a fixed length
-max_sequence_length = 250
-x_train = pad_sequences(x_train, maxlen=max_sequence_length)
-x_val = pad_sequences(x_val, maxlen=max_sequence_length)
-x_test = pad_sequences(x_test, maxlen=max_sequence_length)
+import csv
+import pandas as pd
+import numpy as np
+
+# Replace 'your_dataset.csv' with the actual path to your CSV file
+csv_file = 'train_set.csv'
+
+# Load the CSV file into a DataFrame
+df = pd.read_csv(csv_file)
+
+# # Display the DataFrame
+# print(df)
+
+column_name = 'motivo contacto'
+input = df[column_name].tolist()
+
+column_name = 'ultimo algoritmo'
+output = df[column_name].tolist()
+
+import nltk
+from tensorflow.keras.preprocessing.text import Tokenizer
+
+# Get the list of Portuguese stopwords
+stop_words = nltk.corpus.stopwords.words('portuguese')
+
+# Function to preprocess and tokenize text while filtering out stopwords
+def preprocess_text(text):
+    
+    # Remove stopwords
+    filtered_words = [word for word in text if word.lower() not in stop_words]
+    
+    return ' '.join(filtered_words)
+
+# Preprocess the text data
+preprocessed_texts = [preprocess_text(text) for text in input]
+
+
+#output
+
+#categorize output
+from sklearn import preprocessing
+
+
+le = preprocessing.OneHotEncoder()
+categorical_labels = le.fit_transform(np.reshape(output, (-1,1))).toarray()
+
+
+x_train = preprocessed_texts
+total_elems = len(le.categories_[0])
+
+
+# Create tokenizer
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts(preprocessed_texts)
+
+# Convert texts to sequences of integers
+sequences = tokenizer.texts_to_sequences(preprocessed_texts)
+
+max_sequence_length = 150  # Example maximum sequence length
+padded_sequences = pad_sequences(sequences, maxlen=max_sequence_length, padding='post')
+
+from sklearn.model_selection import train_test_split
+import numpy as np
+
+# Split the data into training and testing sets
+x_train, x_test, y_train, y_test = train_test_split(padded_sequences, categorical_labels, test_size=0.2, random_state=42)
+
+# Print the shapes of the resulting datasets
+print("Training data shape:", x_train.shape, y_train.shape)
+print("Testing data shape:", x_test.shape, y_test.shape)
+
 
 # Print information about the datasets
 print(f"Number of training examples: {len(x_train)}")
@@ -133,7 +199,7 @@ model_target_pos = create_q_model(num_positions, num_positions)
 # improves training time
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
 optimizer_pos = tf.keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
-env = NASEnvironment(x_train, y_train, x_val, y_val, x_test, y_test, epochs=7, sequence_len=num_positions) #epochs=7
+env = NASEnvironment(x_train, y_train, x_test, y_test, x_test, y_test, epochs=7, sequence_len=num_positions) #epochs=7
 
 # Experience replay buffers
 action_history = []
@@ -328,7 +394,7 @@ while True:  # Run until solved
 
     episode_count += 1
 
-    if running_reward > 40:  # Condition to consider the task solved
+    if running_reward > 90:  # Condition to consider the task solved
         print("Solved at episode {}!".format(episode_count))
         break
 
@@ -336,10 +402,16 @@ while True:  # Run until solved
 #save state and reward
 import pickle
 
-final_state = None
-recorded_reward = []
-
-
 # Pickle the list
 with open('rewards_history.pkl', 'wb') as f:
     pickle.dump(rewards_history, f)
+
+
+# model_json = model.to_json()
+# with open('final_model.json', 'w') as json_file:
+#     json_file.write(model_json)
+# model.save('final_model.h5')
+
+# # Pickle the list
+# with open('winner_state.pkl', 'wb') as f:
+#     pickle.dump(state, f)

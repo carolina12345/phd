@@ -74,7 +74,7 @@ class NASEnvironment(gym.Env):
             second_part = self.state[cut_index:]
             
             # Concatenate the first part with the padded second part
-            self.state = np.concatenate((first_part, np.ones_like(second_part)))
+            self.state = np.concatenate((first_part, 2*np.ones_like(second_part)))
         except:
             self.state = self.state
 
@@ -89,21 +89,21 @@ class NASEnvironment(gym.Env):
                 )
                 
                 # Access training accuracy from the history object
-                training_accuracy = history.history['accuracy']
+                training_accuracy = history.history['val_accuracy']
             except Exception as e:
                 print(f"An error occurred: {e}")
-                training_accuracy = 0
+                training_accuracy = [0]
 
 
             #model evaluation
             # predicted_labels = model.predict(self.eval_features)
             # reward = accuracy_score(self.eval_labels, predicted_labels)*100
                 
-            reward = np.mean(training_accuracy)*100
+            reward = np.mean(training_accuracy[-1])*100
             print('Current reward: ', reward)
 
             # Return the new state, reward, whether the episode is done, and additional info
-            if reward>self.satisfaction_limit:
+            if reward>90:
                 done = True
                 # Save the model architecture to JSON
                 model_json = model.to_json()
