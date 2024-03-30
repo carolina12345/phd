@@ -4,82 +4,16 @@ from tensorflow.keras.datasets import imdb
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
 
-import tensorflow as tf
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-from sklearn.model_selection import train_test_split
+# Load the IMDb dataset
+(x_train, y_train), (x_test, y_test) = imdb.load_data(num_words=10000)
 
+x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=42)
 
-import csv
-import pandas as pd
-import numpy as np
-
-# Replace 'your_dataset.csv' with the actual path to your CSV file
-csv_file = 'train_set.csv'
-
-# Load the CSV file into a DataFrame
-df = pd.read_csv(csv_file)
-
-# # Display the DataFrame
-# print(df)
-
-column_name = 'motivo contacto'
-input = df[column_name].tolist()
-
-column_name = 'ultimo algoritmo'
-output = df[column_name].tolist()
-
-import nltk
-from tensorflow.keras.preprocessing.text import Tokenizer
-
-# Get the list of Portuguese stopwords
-stop_words = nltk.corpus.stopwords.words('portuguese')
-
-# Function to preprocess and tokenize text while filtering out stopwords
-def preprocess_text(text):
-    
-    # Remove stopwords
-    filtered_words = [word for word in text if word.lower() not in stop_words]
-    
-    return ' '.join(filtered_words)
-
-# Preprocess the text data
-preprocessed_texts = [preprocess_text(text) for text in input]
-
-
-#output
-
-#categorize output
-from sklearn import preprocessing
-
-
-le = preprocessing.OneHotEncoder()
-categorical_labels = le.fit_transform(np.reshape(output, (-1,1))).toarray()
-
-
-x_train = preprocessed_texts
-total_elems = len(le.categories_[0])
-
-
-# Create tokenizer
-tokenizer = Tokenizer()
-tokenizer.fit_on_texts(preprocessed_texts)
-
-# Convert texts to sequences of integers
-sequences = tokenizer.texts_to_sequences(preprocessed_texts)
-
-max_sequence_length = 150  # Example maximum sequence length
-padded_sequences = pad_sequences(sequences, maxlen=max_sequence_length, padding='post')
-
-from sklearn.model_selection import train_test_split
-import numpy as np
-
-# Split the data into training and testing sets
-x_train, x_test, y_train, y_test = train_test_split(padded_sequences, categorical_labels, test_size=0.2, random_state=42)
-
-# Print the shapes of the resulting datasets
-print("Training data shape:", x_train.shape, y_train.shape)
-print("Testing data shape:", x_test.shape, y_test.shape)
-
+# Pad sequences to a fixed length
+max_sequence_length = 250
+x_train = pad_sequences(x_train, maxlen=max_sequence_length)
+x_val = pad_sequences(x_val, maxlen=max_sequence_length)
+x_test = pad_sequences(x_test, maxlen=max_sequence_length)
 
 # Print information about the datasets
 print(f"Number of training examples: {len(x_train)}")
@@ -138,9 +72,10 @@ def create_q_model(num_positions, output_dim):
     inputs = layers.Input(shape=(num_positions))
 
     #sequence_one_hot = Input(shape=(alph_size, alph_size))
-    embedd = layers.Embedding(input_dim=num_positions, output_dim=512, trainable=True)(inputs)
+    #embedd = layers.Embedding(input_dim=num_positions, output_dim=512, trainable=True)(inputs)
+    dense0 = layers.Dense(512*num_positions)(inputs)
 
-    embedd = layers.Reshape((-1,1))(embedd)
+    embedd = layers.Reshape((-1,1))(dense0)
 
     # 1st CNN layer with max-pooling
     conv1 = layers.Convolution1D(256,7,kernel_initializer=RandomNormal(mean=0.0, stddev=0.05), bias_initializer=RandomNormal(mean=0.0, stddev=0.05),activation='relu')(embedd)#sequence_one_hot
@@ -199,7 +134,7 @@ model_target_pos = create_q_model(num_positions, num_positions)
 # improves training time
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
 optimizer_pos = tf.keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
-env = NASEnvironment(x_train, y_train, x_test, y_test, x_test, y_test, epochs=7, sequence_len=num_positions) #epochs=7
+env = NASEnvironment(x_train, y_train, x_val, y_val, x_test, y_test, epochs=7, sequence_len=num_positions) #epochs=7
 
 # Experience replay buffers
 action_history = []
@@ -235,157 +170,158 @@ while True:  # Run until solved
     state = env.reset()
     episode_reward = 0
 
-    for timestep in range(1, max_steps_per_episode):
-        # env.render(); Adding this line would show the attempts
-        # of the agent in a pop up window.
-        frame_count += 1
+    #for timestep in range(1, max_steps_per_episode):
+    # env.render(); Adding this line would show the attempts
+    # of the agent in a pop up window.
+    frame_count += 1
 
-        #model action
-        # Use epsilon-greedy for exploration
-        if frame_count < epsilon_random_frames or epsilon > np.random.rand(1)[0]:
-            # Take random action
-            action_value = np.random.choice(num_actions)
-        else:
-            # Predict action Q-values
-            # From environment state
-            state_tensor = tf.convert_to_tensor(state)
-            state_tensor = tf.expand_dims(state_tensor, 0)
-            action_probs = model(state_tensor, training=False)
-            # Take best action
-            action_value = tf.argmax(action_probs[0]).numpy()
+    #model action
+    # Use epsilon-greedy for exploration
+    if frame_count < epsilon_random_frames or epsilon > np.random.rand(1)[0]:
+        # Take random action
+        action_value = np.random.choice(num_actions)
+    else:
+        # Predict action Q-values
+        # From environment state
+        state_tensor = tf.convert_to_tensor(state)
+        state_tensor = tf.expand_dims(state_tensor, 0)
+        action_probs = model(state_tensor, training=False)
+        # Take best action
+        action_value = tf.argmax(action_probs[0]).numpy()
 
-        #model position
-        if frame_count < epsilon_random_frames or epsilon > np.random.rand(1)[0]:
-            # Take random action
-            action_pos = np.random.choice(num_positions)
-        else:
-            # Predict action Q-values
-            # From environment state
-            state_tensor = tf.convert_to_tensor(state)
-            state_tensor = tf.expand_dims(state_tensor, 0)
-            action_probs = model_pos(state_tensor, training=False)
-            # Take best action
-            action_pos = tf.argmax(action_probs[0]).numpy()
+    #model position
+    if frame_count < epsilon_random_frames or epsilon > np.random.rand(1)[0]:
+        # Take random action
+        action_pos = np.random.choice(num_positions)
+    else:
+        # Predict action Q-values
+        # From environment state
+        state_tensor = tf.convert_to_tensor(state)
+        state_tensor = tf.expand_dims(state_tensor, 0)
+        action_probs = model_pos(state_tensor, training=False)
+        # Take best action
+        action_pos = tf.argmax(action_probs[0]).numpy()
 
-        # Decay probability of taking random action
-        epsilon -= epsilon_interval / epsilon_greedy_frames
-        epsilon = max(epsilon, epsilon_min)
+    # Decay probability of taking random action
+    epsilon -= epsilon_interval / epsilon_greedy_frames
+    epsilon = max(epsilon, epsilon_min)
 
-        # Apply the sampled action in our environment
-        state_next, reward, done, _ = env.step((action_value, action_pos))
-        state_next = np.array(state_next)
+    # Apply the sampled action in our environment
+    state_next, reward, done, _ = env.step((action_value, action_pos))
+    state_next = np.array(state_next)
 
-        episode_reward += reward
+    episode_reward += reward
 
-        print('state.shape', state.shape)
-        print('state_next.shape', state_next.shape)
+    # print('state.shape', state.shape)
+    # print('state_next.shape', state_next.shape)
 
-        print("reward", reward)
-        print("episode reward", episode_reward)
+    # print("reward", reward)
+    # print("episode reward", episode_reward)
 
-        # Save actions and states in replay buffer
-        action_history.append(action_value)
-        action_pos_history.append(action_pos)
-        state_history.append(state)
-        state_next_history.append(state_next)
-        done_history.append(done)
-        rewards_history.append(reward)
-        state = state_next
+    # Save actions and states in replay buffer
+    action_history.append(action_value)
+    action_pos_history.append(action_pos)
+    state_history.append(state)
+    state_next_history.append(state_next)
+    done_history.append(done)
+    rewards_history.append(reward)
+    state = state_next
 
-        # Update every fourth frame and once batch size is over 32
-        if frame_count % update_after_actions == 0 and len(done_history) > batch_size:
+    # Update every fourth frame and once batch size is over 32
+    if frame_count % update_after_actions == 0 and len(done_history) > batch_size:
 
-            # Get indices of samples for replay buffers
-            indices = np.random.choice(range(len(done_history)), size=batch_size)
+        # Get indices of samples for replay buffers
+        indices = np.random.choice(range(len(done_history)), size=batch_size)
 
-            # Using list comprehension to sample from replay buffer
-            state_sample = np.array([state_history[i] for i in indices])
-            state_next_sample = np.array([state_next_history[i] for i in indices])
-            rewards_sample = [rewards_history[i] for i in indices]
-            action_sample = [action_history[i] for i in indices]
-            action_pos_sample = [action_pos_history[i] for i in indices]
-            done_sample = tf.convert_to_tensor(
-                [float(done_history[i]) for i in indices]
-            )
+        # Using list comprehension to sample from replay buffer
+        state_sample = np.array([state_history[i] for i in indices])
+        state_next_sample = np.array([state_next_history[i] for i in indices])
+        rewards_sample = [rewards_history[i] for i in indices]
+        action_sample = [action_history[i] for i in indices]
+        action_pos_sample = [action_pos_history[i] for i in indices]
+        done_sample = tf.convert_to_tensor(
+            [float(done_history[i]) for i in indices]
+        )
 
-            # Build the updated Q-values for the sampled future states
-            # Use the target model for stability
-            print('state_next_sample.shape', state_next_sample.shape)
-            future_rewards = model_target.predict(tf.convert_to_tensor(state_next_sample))
-            # Q value = reward + discount factor * expected future reward
-            updated_q_values = rewards_sample + gamma * tf.reduce_max(
-                future_rewards, axis=1
-            )
+        # Build the updated Q-values for the sampled future states
+        # Use the target model for stability
+        #print('state_next_sample.shape', state_next_sample.shape)
+        future_rewards = model_target.predict(tf.convert_to_tensor(state_next_sample))
+        # Q value = reward + discount factor * expected future reward
+        updated_q_values = rewards_sample + gamma * tf.reduce_max(
+            future_rewards, axis=1
+        )
 
-            # If final frame set the last value to -1
-            updated_q_values = updated_q_values * (1 - done_sample) - done_sample
+        # If final frame set the last value to -1
+        updated_q_values = updated_q_values * (1 - done_sample) - done_sample
 
-            # Create a mask so we only calculate loss on the updated Q-values
-            masks = tf.one_hot(action_sample, num_actions)
+        # Create a mask so we only calculate loss on the updated Q-values
+        masks = tf.one_hot(action_sample, num_actions)
 
-            #action model
-            with tf.GradientTape() as tape:
-                # Train the model on the states and updated Q-values
-                q_values = model(state_sample)
+        #action model
+        with tf.GradientTape() as tape:
+            # Train the model on the states and updated Q-values
+            q_values = model(state_sample)
 
-                # Apply the masks to the Q-values to get the Q-value for action taken
-                q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
-                # Calculate loss between new Q-value and old Q-value
-                loss = loss_function(updated_q_values, q_action)
+            # Apply the masks to the Q-values to get the Q-value for action taken
+            q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
+            # Calculate loss between new Q-value and old Q-value
+            loss = loss_function(updated_q_values, q_action)
 
-            # Backpropagation
-            grads = tape.gradient(loss, model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, model.trainable_variables))
-
-
-            # Build the updated Q-values for the sampled future states
-            # Use the target model for stability
-            future_rewards_pos = model_target_pos.predict(state_next_sample)
-            # Q value = reward + discount factor * expected future reward
-            updated_q_values_pos = rewards_sample + gamma * tf.reduce_max(
-                future_rewards_pos, axis=1
-            )
-
-            # If final frame set the last value to -1
-            updated_q_values_pos = updated_q_values_pos * (1 - done_sample) - done_sample
+        # Backpropagation
+        grads = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradients(zip(grads, model.trainable_variables))
 
 
-            #position model
-            masks_pos = tf.one_hot(action_pos_sample, num_positions)
+        # Build the updated Q-values for the sampled future states
+        # Use the target model for stability
+        future_rewards_pos = model_target_pos.predict(state_next_sample)
+        # Q value = reward + discount factor * expected future reward
+        updated_q_values_pos = rewards_sample + gamma * tf.reduce_max(
+            future_rewards_pos, axis=1
+        )
 
-            with tf.GradientTape() as tape_pos:
-                # Train the model on the states and updated Q-values
-                q_values_pos = model_pos(state_sample)
+        # If final frame set the last value to -1
+        updated_q_values_pos = updated_q_values_pos * (1 - done_sample) - done_sample
 
-                # Apply the masks to the Q-values to get the Q-value for action taken
-                q_action_pos = tf.reduce_sum(tf.multiply(q_values_pos, masks_pos), axis=1)
-                # Calculate loss between new Q-value and old Q-value
-                loss_pos = loss_pos_function(updated_q_values_pos, q_action_pos)
 
-            # Backpropagation
-            grads_pos = tape_pos.gradient(loss_pos, model_pos.trainable_variables)
-            optimizer_pos.apply_gradients(zip(grads_pos, model_pos.trainable_variables))
+        #position model
+        masks_pos = tf.one_hot(action_pos_sample, num_positions)
 
-        if frame_count % update_target_network == 0:
-            # update the the target network with new weights
-            model_target.set_weights(model.get_weights())
-            model_target_pos.set_weights(model_pos.get_weights())
-            # Log details
-            template = "running reward: {:.2f} at episode {}, frame count {}"
-            print(template.format(running_reward, episode_count, frame_count))
+        with tf.GradientTape() as tape_pos:
+            # Train the model on the states and updated Q-values
+            q_values_pos = model_pos(state_sample)
 
-        # Limit the state and reward history
-        if len(rewards_history) > max_memory_length:
-            #del rewards_history[:1]
-            del state_history[:1]
-            del action_pos_history[:1]
-            del state_next_history[:1]
-            del action_history[:1]
-            del done_history[:1]
+            # Apply the masks to the Q-values to get the Q-value for action taken
+            q_action_pos = tf.reduce_sum(tf.multiply(q_values_pos, masks_pos), axis=1)
+            # Calculate loss between new Q-value and old Q-value
+            loss_pos = loss_pos_function(updated_q_values_pos, q_action_pos)
 
-        if done:
-            break
+        # Backpropagation
+        grads_pos = tape_pos.gradient(loss_pos, model_pos.trainable_variables)
+        optimizer_pos.apply_gradients(zip(grads_pos, model_pos.trainable_variables))
 
+    if frame_count % update_target_network == 0:
+        # update the the target network with new weights
+        model_target.set_weights(model.get_weights())
+        model_target_pos.set_weights(model_pos.get_weights())
+        # Log details
+        template = "running reward: {:.2f} at episode {}, frame count {}"
+        print(template.format(running_reward, episode_count, frame_count))
+
+    # Limit the state and reward history
+    if len(rewards_history) > max_memory_length:
+        #del rewards_history[:1]
+        del state_history[:1]
+        del action_pos_history[:1]
+        del state_next_history[:1]
+        del action_history[:1]
+        del done_history[:1]
+
+    if done:
+        break
+    
+    print('reward', reward)
     # Update running reward to check condition for solving
     episode_reward_history.append(episode_reward)
     if len(episode_reward_history) > 100:
