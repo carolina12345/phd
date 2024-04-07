@@ -2,19 +2,18 @@ import gym
 from gym import spaces
 import numpy as np
 
-from net_builder_googleNet_sequence import *
+from net_builder_minimal_sequence import *
 from transformer_keras_io import *
 from sklearn.metrics import accuracy_score
 from tensorflow.keras.models import model_from_json
 import pickle
 
-class NASEnvironment(gym.Env):
+class NASEnvironment():
     def __init__(self, 
                 train_features, train_labels, 
                 validation_features, validation_labels, 
                 eval_features, eval_labels, 
                 epochs, sequence_len):
-        super(NASEnvironment, self).__init__()
 
         self.sequence_len = sequence_len
 
@@ -51,22 +50,29 @@ class NASEnvironment(gym.Env):
         self.last_reward = 0
         self.last_state = np.zeros(self.sequence_len)
 
+        self.seen_states = []
+
     def reset(self):
         # Reset the environment to its initial state
         self.state = np.zeros(self.sequence_len)
         return self.state
+    
+
+    def find_by_state(self, cur_state):
+        for s in self.seen_states:
+            if s[0] == cur_state:
+                return s
+        return None
+
 
     def step(self, action):
         val_action, pos_action = action
 
         self.state[pos_action] = val_action
 
-        if all(self.state == self.last_state):
-            return self.state, self.last_reward, False, {}
-
         # Initialize root node with Conv1D parameters
         #cut state sequence where it meets value
-        try:
+        if np.where(self.state == self.cut_value)[0].size != 0:
             cut_index = np.where(self.state == self.cut_value)[0][0]
 
             # Split the array into two parts
@@ -75,35 +81,54 @@ class NASEnvironment(gym.Env):
             
             # Concatenate the first part with the padded second part
             self.state = np.concatenate((first_part, 2*np.ones_like(second_part)))
-        except:
-            self.state = self.state
+
+            self.evaluate_state = first_part
+        else:
+            self.evaluate_state = self.state
+
+        if all(self.state == self.last_state):
+            return self.state, self.last_reward, False, {}
+        
+
+        # seen_state = self.find_by_state(self.state)
+        # if seen_state: #seen state
+        #     self.last_reward = seen_state[1]
+        #     return self.state, seen_state[1], False, {}  
 
         try:
+            print('building model')
+            float_strings = [str(int(float_value)) for float_value in self.evaluate_state]
+            print(''.join(float_strings))
 
-            model = build_tree_model(self.input_shape, self.num_classes, self.state, self.max_length, self.vocab_size, self.embedding_dim)
-            model.compile(optimizer="adam", loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+
+            model = build_tree_model(self.input_shape, self.num_classes, ''.join(float_strings), self.max_length, self.vocab_size, self.embedding_dim)
+            model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
             
-            try:
-                history = model.fit(
-                    self.train_features, self.train_labels, batch_size=self.batch_size, epochs=self.epochs, validation_data=(self.validation_features, self.validation_labels)
-                )
-                
-                # Access training accuracy from the history object
-                training_accuracy = history.history['val_accuracy']
-            except Exception as e:
-                print(f"An error occurred: {e}")
-                training_accuracy = [0]
+            model.summary()
+
+            history = model.fit(
+                self.train_features, self.train_labels, batch_size=self.batch_size, epochs=self.epochs, validation_data=(self.validation_features, self.validation_labels)
+            )
+
+            predictions = model.predict(self.eval_features)
+
+            prdictions_binary = (predictions >= 0.5).astype(int)
+            
+            # Access training accuracy from the history object
+            #training_accuracy = history.history['val_accuracy']
+            training_accuracy = accuracy_score(self.eval_labels, prdictions_binary)*100
 
 
             #model evaluation
             # predicted_labels = model.predict(self.eval_features)
             # reward = accuracy_score(self.eval_labels, predicted_labels)*100
                 
-            reward = np.mean(training_accuracy[-1])*100
+            #reward = np.mean(training_accuracy)*100
+            reward = training_accuracy
             print('Current reward: ', reward)
 
             # Return the new state, reward, whether the episode is done, and additional info
-            if reward>90:
+            if reward>self.satisfaction_limit:
                 done = True
                 # Save the model architecture to JSON
                 model_json = model.to_json()
@@ -120,6 +145,8 @@ class NASEnvironment(gym.Env):
 
             self.last_reward = reward
             self.last_state = self.state
+
+            self.seen_states.append(tuple(self.state, reward))
 
             return self.state, reward, done, {} #info
         except:

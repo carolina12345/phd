@@ -20,7 +20,7 @@ print(f"Number of training examples: {len(x_train)}")
 print(f"Number of testing examples: {len(x_test)}")
 
 num_actions = 3
-num_positions = 15
+num_positions = 10
 
 ##############################################################################
 import gym
@@ -134,7 +134,7 @@ model_target_pos = create_q_model(num_positions, num_positions)
 # improves training time
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
 optimizer_pos = tf.keras.optimizers.Adam(learning_rate=0.00025, clipnorm=1.0)
-env = NASEnvironment(x_train, y_train, x_val, y_val, x_test, y_test, epochs=7, sequence_len=num_positions) #epochs=7
+env = NASEnvironment(x_train, y_train, x_val, y_val, x_test, y_test, epochs=10, sequence_len=num_positions) #epochs=7
 
 # Experience replay buffers
 action_history = []
@@ -153,11 +153,11 @@ epsilon_random_frames = 50000
 epsilon_greedy_frames = 1000000.0
 # Maximum replay length
 # Note: The Deepmind paper suggests 1000000 however this causes memory issues
-max_memory_length = 100000
+max_memory_length = 10000 #100000
 # Train the model after 4 actions
 update_after_actions = 4
 # How often to update the target network
-update_target_network = 10000
+update_target_network = 5#10000
 # Using huber loss for stability
 loss_function = tf.keras.losses.Huber()
 loss_pos_function = tf.keras.losses.Huber()
@@ -166,8 +166,9 @@ loss_pos_function = tf.keras.losses.Huber()
 final_state = None
 recorded_reward = []
 
+state = env.reset()
 while True:  # Run until solved
-    state = env.reset()
+    #state = env.reset()
     episode_reward = 0
 
     #for timestep in range(1, max_steps_per_episode):
@@ -311,7 +312,7 @@ while True:  # Run until solved
 
     # Limit the state and reward history
     if len(rewards_history) > max_memory_length:
-        #del rewards_history[:1]
+        del rewards_history[:1]
         del state_history[:1]
         del action_pos_history[:1]
         del state_next_history[:1]
@@ -342,7 +343,7 @@ import pickle
 with open('rewards_history.pkl', 'wb') as f:
     pickle.dump(rewards_history, f)
 
-
+####################################################################
 # model_json = model.to_json()
 # with open('final_model.json', 'w') as json_file:
 #     json_file.write(model_json)
