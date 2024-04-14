@@ -7,7 +7,7 @@ from tensorflow.keras.initializers import RandomNormal
 import gym
 
 
-env = gym.make("ALE/Othello-v5")
+env = gym.make("Pong-v0", frameskip=4, obs_type="grayscale")
 #env = gymnasium.wrappers.RecordEpisodeStatistics(env, deque_size=10)
 
 observation, info = env.reset()
@@ -34,30 +34,30 @@ max_steps_per_episode = 10000
 # state_size = env.observation_space.shape
 # num_actions = env.action_space.n
 
-num_actions = 10
+num_actions = 3
 
 
 def create_q_model():
     # Network defined by the Deepmind paper
-    inputs = Input(shape=(210, 160, 3))
+    # inputs = Input(shape=(210, 160, 3))
 
-    layer1 = Conv2D(32, 8, strides=4, activation="relu")(inputs)
-    layer2 = Conv2D(64, 4, strides=2, activation="relu")(layer1)
-    layer3 = Conv2D(64, 3, strides=1, activation="relu")(layer2)
+    # layer1 = Conv2D(32, 8, strides=4, activation="relu")(inputs)
+    # layer2 = Conv2D(64, 4, strides=2, activation="relu")(layer1)
+    # layer3 = Conv2D(64, 3, strides=1, activation="relu")(layer2)
 
-    layer4 = MaxPooling2D(pool_size=(2, 2), strides=(2, 2))(layer3)
+    # layer4 = MaxPooling2D(pool_size=(2, 2), strides=(2, 2))(layer3)
 
-    #reshaped_layer4 = layers.Reshape((6, 6*64))(layer4)
-    layer5 = Flatten()(layer4)
+    # #reshaped_layer4 = layers.Reshape((6, 6*64))(layer4)
+    # layer5 = Flatten()(layer4)
 
-    # Reshape the 2D tensor to a 1D sequence
-    reshape = Reshape((-1,1))(layer5)
-
+    # # Reshape the 2D tensor to a 1D sequence
+    # reshape = Reshape((-1,1))(layer5)
+    inputs = Input(shape=(210, 160))
 
     #sequence_one_hot = Input(shape=(alph_size, alph_size))
 
     # 1st CNN layer with max-pooling
-    conv1 = Convolution1D(256,7,kernel_initializer=RandomNormal(mean=0.0, stddev=0.05), bias_initializer=RandomNormal(mean=0.0, stddev=0.05),activation='relu')(reshape)#sequence_one_hot
+    conv1 = Convolution1D(256,7,kernel_initializer=RandomNormal(mean=0.0, stddev=0.05), bias_initializer=RandomNormal(mean=0.0, stddev=0.05),activation='relu')(inputs)#sequence_one_hot
     pool1 = MaxPooling1D(pool_size=3)(conv1)
 
     # 2nd CNN layer with max-pooling
@@ -89,7 +89,7 @@ def create_q_model():
     dropout2 = Dropout(0.5)(dense2)
 
     # 3rd fully connected layer with softmax outputs
-    dense3 = Dense(num_actions, kernel_initializer=RandomNormal(mean=0.0, stddev=0.05), bias_initializer=RandomNormal(mean=0.0, stddev=0.05),activation='softmax')(dropout2)
+    dense3 = Dense(num_actions, kernel_initializer=RandomNormal(mean=0.0, stddev=0.05), bias_initializer=RandomNormal(mean=0.0, stddev=0.05),activation='linear')(dropout2)
 
     model = tf.keras.Model(inputs=inputs, outputs=dense3)
 
@@ -132,9 +132,10 @@ update_after_actions = 4
 update_target_network = 10000
 # Using huber loss for stability
 loss_function = tf.keras.losses.Huber()
-
+frameskip = 4
 
 state = env.reset()[0]
+print('reset state', state.shape)
 #print('state0', state)
 while True:  # Run until solved
     
@@ -143,96 +144,99 @@ while True:  # Run until solved
     for timestep in range(1, max_steps_per_episode):
         # env.render(); Adding this line would show the attempts
         # of the agent in a pop up window.
-        frame_count += 1
+        
 
-        # Use epsilon-greedy for exploration
-        if frame_count < epsilon_random_frames or epsilon > np.random.rand(1)[0]:
-            # Take random action
-            action = np.random.choice(num_actions)
+        if frame_count % frameskip == 0:
+            # Use epsilon-greedy for exploration
+            if frame_count < epsilon_random_frames or epsilon > np.random.rand(1)[0]:
+                # Take random action
+                action = np.random.choice(num_actions)
+            else:
+                # Predict action Q-values
+                # From environment state
+                state_tensor = tf.convert_to_tensor(state)
+                state_tensor = tf.expand_dims(state_tensor, 0)
+                action_probs = model(state_tensor, training=False)
+                # Take best action
+                action = tf.argmax(action_probs, axis=-1).numpy()[0]
+
+            # Decay probability of taking random action
+            epsilon -= epsilon_interval / epsilon_greedy_frames
+            epsilon = max(epsilon, epsilon_min)
+
+            # Apply the sampled action in our environment
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            reward = (reward+21)*100
+            #state_next, reward, done, _ = env.step(action)
+            done = terminated or truncated
+            state_next = next_obs
+
+            episode_reward += reward
+
+            print("reward", reward)
+            print("episode reward", episode_reward)
+
+            # Save actions and states in replay buffer
+            action_history.append(action)
+            state_history.append(state)
+            state_next_history.append(state_next)
+            done_history.append(done)
+            rewards_history.append(reward)
+
+            state = state_next
+
+            # Update every fourth frame and once batch size is over 32
+            if frame_count % update_after_actions == 0 and len(done_history) > batch_size:
+
+                # Get indices of samples for replay buffers
+                indices = np.random.choice(range(len(done_history)), size=batch_size)
+
+                # Using list comprehension to sample from replay buffer
+                state_sample = [state_history[i] for i in indices]
+                state_next_sample = [state_next_history[i] for i in indices]
+                rewards_sample = [rewards_history[i] for i in indices]
+                action_sample = [action_history[i] for i in indices]
+                done_sample = tf.convert_to_tensor(
+                    [float(done_history[i]) for i in indices]
+                )
+
+                # Build the updated Q-values for the sampled future states
+                # Use the target model for stability
+                future_rewards = model_target.predict(tf.stack(state_next_sample, axis=0))
+                # Q value = reward + discount factor * expected future reward
+                updated_q_values = rewards_sample + gamma * tf.cast(tf.reduce_max(future_rewards, axis=-1), dtype=tf.float32)
+
+                # If final frame set the last value to -1
+                updated_q_values = updated_q_values * (1 - done_sample) - done_sample
+
+                # Create a mask so we only calculate loss on the updated Q-values
+                masks = tf.one_hot(action_sample, num_actions)
+
+                with tf.GradientTape() as tape:
+                    # Train the model on the states and updated Q-values
+                    #print(state_sample)
+                    #print(state_sample[0].shape)
+                    q_values = model(tf.stack(state_sample, axis=0))
+
+                    # Apply the masks to the Q-values to get the Q-value for action taken
+                    q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
+                    # Calculate loss between new Q-value and old Q-value
+                    loss = loss_function(updated_q_values, q_action)
+
+                # Backpropagation
+                grads = tape.gradient(loss, model.trainable_variables)
+                optimizer.apply_gradients(zip(grads, model.trainable_variables))
+
+            if frame_count % update_target_network == 0:
+                # update the the target network with new weights
+                model_target.set_weights(model.get_weights())
+                # Log details
+                template = "running reward: {:.2f} at episode {}, frame count {}"
+                print(template.format(running_reward, episode_count, frame_count))
         else:
-            # Predict action Q-values
-            # From environment state
-            state_tensor = tf.convert_to_tensor(state)
-            state_tensor = tf.expand_dims(state_tensor, 0)
-            action_probs = model(state_tensor, training=False)
-            # Take best action
-            action = tf.argmax(action_probs[0]).numpy()
+            next_obs, reward, terminated, truncated, info = env.step(action)
 
-        # Decay probability of taking random action
-        epsilon -= epsilon_interval / epsilon_greedy_frames
-        epsilon = max(epsilon, epsilon_min)
-
-        # Apply the sampled action in our environment
-        next_obs, reward, terminated, truncated, info = env.step(action)
-        reward = reward*100
-        #state_next, reward, done, _ = env.step(action)
-        done = terminated or truncated
-        state_next = next_obs
-
-        episode_reward += reward
-
-        print("reward", reward)
-        print("episode reward", episode_reward)
-
-        # Save actions and states in replay buffer
-        action_history.append(action)
-        state_history.append(state)
-        state_next_history.append(state_next)
-        done_history.append(done)
-        rewards_history.append(reward)
-
-        state = state_next
-
-        # Update every fourth frame and once batch size is over 32
-        if frame_count % update_after_actions == 0 and len(done_history) > batch_size:
-
-            # Get indices of samples for replay buffers
-            indices = np.random.choice(range(len(done_history)), size=batch_size)
-
-            # Using list comprehension to sample from replay buffer
-            state_sample = [state_history[i] for i in indices]
-            state_next_sample = [state_next_history[i] for i in indices]
-            rewards_sample = [rewards_history[i] for i in indices]
-            action_sample = [action_history[i] for i in indices]
-            done_sample = tf.convert_to_tensor(
-                [float(done_history[i]) for i in indices]
-            )
-
-            # Build the updated Q-values for the sampled future states
-            # Use the target model for stability
-            future_rewards = model_target.predict(tf.stack(state_next_sample, axis=0))
-            # Q value = reward + discount factor * expected future reward
-            updated_q_values = rewards_sample + gamma * tf.reduce_max(
-                future_rewards, axis=1
-            )
-
-            # If final frame set the last value to -1
-            updated_q_values = updated_q_values * (1 - done_sample) - done_sample
-
-            # Create a mask so we only calculate loss on the updated Q-values
-            masks = tf.one_hot(action_sample, num_actions)
-
-            with tf.GradientTape() as tape:
-                # Train the model on the states and updated Q-values
-                #print(state_sample)
-                #print(state_sample[0].shape)
-                q_values = model(tf.stack(state_sample, axis=0))
-
-                # Apply the masks to the Q-values to get the Q-value for action taken
-                q_action = tf.reduce_sum(tf.multiply(q_values, masks), axis=1)
-                # Calculate loss between new Q-value and old Q-value
-                loss = loss_function(updated_q_values, q_action)
-
-            # Backpropagation
-            grads = tape.gradient(loss, model.trainable_variables)
-            optimizer.apply_gradients(zip(grads, model.trainable_variables))
-
-        if frame_count % update_target_network == 0:
-            # update the the target network with new weights
-            model_target.set_weights(model.get_weights())
-            # Log details
-            template = "running reward: {:.2f} at episode {}, frame count {}"
-            print(template.format(running_reward, episode_count, frame_count))
+        frame_count += 1
 
         # Limit the state and reward history
         if len(rewards_history) > max_memory_length:
