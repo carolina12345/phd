@@ -3,29 +3,27 @@ import tensorflow as tf
 from tensorflow.keras.datasets import imdb
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
-import gym
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
-#from custom_environment2 import NASEnvironment
-from custom_environment3 import NASEnvironment
+from functools import reduce
+import operator
+from keras import backend as K
 import gym
 
+frame_skip = 1
 
-env = gym.make("ALE/Othello-v5")
+env = gym.make("Pong-v0")#, obs_type="grayscale")
 
-sequence_len = 7
-maxlen = sequence_len
-num_inputs = maxlen
 num_actions = 3
 num_hidden = 128
 
 
 # Configuration parameters for the whole setup
 seed = 42
-gamma = 0.99  # Discount factor for past rewards
-max_steps_per_episode = 2 #10000
+gamma = 0.5#0.99  # Discount factor for past rewards
+max_steps_per_episode = 2*5
 eps = np.finfo(np.float32).eps.item()  # Smallest number such that 1.0 + eps != 1.0
 
 
@@ -35,10 +33,7 @@ decay_factor = 0.99
 eps_action = initial_epsilon
 eps_position = initial_epsilon
 
-
-num_inputs = 4
-num_actions = 3
-num_hidden = 128
+maxlen = num_actions
 #############################################################################################################
 
 class VectorQuantizer(layers.Layer):
@@ -120,39 +115,118 @@ class VectorQuantizer(layers.Layer):
     #     return encoding_indices
 
 
-def get_encoder(inputs, head_size=256, num_heads=4, ff_dim=4, dropout=0.25):
-    # Attention and Normalization
-    x = layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(inputs, inputs)
-    x = layers.Dropout(dropout)(x)
-    x = layers.LayerNormalization(epsilon=1e-6)(x)
-    res = x + inputs
-
-    # Feed Forward Part
-    x = layers.Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(res)
-    x = layers.Dropout(dropout)(x)
-    x = layers.Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
-    x = layers.LayerNormalization(epsilon=1e-6)(x)
-    encoder_outputs = x + res
-
-    return encoder_outputs #keras.Model(inputs, encoder_outputs, name="encoder")
 
 
-def get_decoder(input_shape, mlp_units=[128], mlp_dropout=0.4):
+# def get_encoder(inputs, head_size=128, num_heads=4, ff_dim=4, dropout=0.25):
+#     # Attention and Normalization
+#     x = layers.MultiHeadAttention(key_dim=head_size, num_heads=num_heads, dropout=dropout)(inputs, inputs)
+#     x = layers.Dropout(dropout)(x)
+#     x = layers.LayerNormalization(epsilon=1e-6)(x)
+#     res = x + inputs
+
+#     # Feed Forward Part
+#     x = layers.Conv1D(filters=ff_dim, kernel_size=1, activation="relu")(res)
+#     x = layers.Dropout(dropout)(x)
+#     x = layers.Conv1D(filters=inputs.shape[-1], kernel_size=1)(x)
+#     x = layers.LayerNormalization(epsilon=1e-6)(x)
+#     encoder_outputs = x + res
+
+#     return encoder_outputs
+    
+
+class TransformerEncoderLayer(tf.keras.layers.Layer):
+    def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
+        super(TransformerEncoderLayer, self).__init__()
+        self.attention = layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
+        self.ffn = tf.keras.Sequential([
+            layers.Dense(ff_dim, activation='relu'),
+            layers.Dense(embed_dim),
+        ])
+        self.layernorm1 = layers.LayerNormalization(epsilon=1e-6)
+        self.layernorm2 = layers.LayerNormalization(epsilon=1e-6)
+        self.dropout1 = layers.Dropout(rate)
+        self.dropout2 = layers.Dropout(rate)
+
+    def call(self, inputs, training=True):
+        attn_output = self.attention(inputs, inputs)
+        attn_output = self.dropout1(attn_output, training=training)
+        out1 = self.layernorm1(inputs + attn_output)
+
+        ffn_output = self.ffn(out1)
+        ffn_output = self.dropout2(ffn_output, training=training)
+        return self.layernorm2(out1 + ffn_output)
+
+class TransformerEncoder(tf.keras.layers.Layer):
+    def __init__(self, num_layers, embed_dim, num_heads, ff_dim, input_vocab_size, maximum_position_encoding, rate=0.1):
+        super(TransformerEncoder, self).__init__()
+        self.embed_dim = embed_dim
+        self.num_layers = num_layers
+        self.embedding = tf.keras.layers.Embedding(input_vocab_size, embed_dim)
+        self.pos_encoding = self.positional_encoding(maximum_position_encoding, self.embed_dim)
+        self.enc_layers = [TransformerEncoderLayer(embed_dim, num_heads, ff_dim, rate) for _ in range(num_layers)]
+        self.dropout = layers.Dropout(rate)
+        
+    def call(self, inputs, training=True):
+        seq_len = tf.shape(inputs)[1]
+        positions = tf.range(start=0, limit=seq_len, delta=1)
+        embedded = self.embedding(inputs)  # (batch_size, input_seq_len, embed_dim)
+        embedded *= tf.math.sqrt(tf.cast(self.embed_dim, tf.float32))
+        embedded += self.pos_encoding[:, :seq_len, :]
+        x = self.dropout(embedded, training=training)
+
+        for i in range(self.num_layers):
+            x = self.enc_layers[i](x, training=training)
+        return x
+    
+    def get_config(self):
+        config = super().get_config().copy()
+        config.update({
+            'num_layers': self.num_layers,
+            'embed_dim': self.embed_dim,
+            'num_heads': self.num_heads,
+            'ff_dim': self.ff_dim,
+            'input_vocab_size': self.input_vocab_size,
+            'maximum_position_encoding': self.maximum_position_encoding,
+            'rate': self.rate,
+        })
+        return config
+
+    def positional_encoding(self, position, d_model):
+        angle_rads = self.get_angles(np.arange(position)[:, np.newaxis],
+                                    np.arange(d_model)[np.newaxis, :],
+                                    d_model)
+      
+        # apply sin to even indices in the array; 2i
+        angle_rads[:, 0::2] = np.sin(angle_rads[:, 0::2])
+      
+        # apply cos to odd indices in the array; 2i+1
+        angle_rads[:, 1::2] = np.cos(angle_rads[:, 1::2])
+        
+        pos_encoding = angle_rads[np.newaxis, ...]
+        
+        return tf.cast(pos_encoding, dtype=tf.float32)
+    
+    def get_angles(self, pos, i, d_model):
+        angle_rates = 1 / np.power(10000, (2 * (i//2)) / np.float32(d_model))
+        return pos * angle_rates
+
+
+def get_decoder(input_shape, output_shape, mlp_units=[128], mlp_dropout=0.4):
     #inputs = keras.Input(shape=build_encoder_model(input_shape).output.shape[1:])
     inputs = keras.Input(shape=(input_shape))
     x = inputs
     for dim in mlp_units:
         x = layers.Dense(dim, activation="relu")(x)
         x = layers.Dropout(mlp_dropout)(x)
-    #outputs = layers.Dense(output_shape, activation="relu")(x)
+    outputs = layers.Dense(output_shape, activation="relu")(x)
 
-    critic_outputs = layers.Dense(1, activation="relu")(x)
+    #critic_outputs = layers.Dense(1, activation="relu")(x)
     # x = tf.reshape(x, (-1, maxlen, num_actions))
     # outputs = tf.argmax(x, axis=2)
-    return keras.Model(inputs, critic_outputs)
+    return keras.Model(inputs, outputs)
 
 
-def build_encoder_model(input_shape, output_dim, head_size=256, num_heads=4, ff_dim=4, num_transformer_blocks=4, mlp_units=[128], dropout=0, mlp_dropout=0):
+def build_encoder_model(input_shape, head_size=256, num_heads=4, ff_dim=4, num_transformer_blocks=4, mlp_units=[128], dropout=0, mlp_dropout=0):
     inputs = layers.Input(shape=input_shape)
     x = keras.backend.expand_dims(inputs, axis=-1)
     for _ in range(num_transformer_blocks):
@@ -161,12 +235,7 @@ def build_encoder_model(input_shape, output_dim, head_size=256, num_heads=4, ff_
     #output = layers.GlobalAveragePooling1D(data_format="channels_first")(x)
     output = x
 
-    encoder_outputs = layers.Flatten()(output)
-    action = layers.Dense(output_dim)(encoder_outputs)
-
-    critic = layers.Dense(1)(encoder_outputs)
-
-    return keras.Model(inputs, [action, critic])
+    return keras.Model(inputs, output)
 
 #######transformer position############################
 
@@ -210,7 +279,13 @@ class TransformerBlock(layers.Layer):
             batch_size = 1
         seq_len = input_shape[1]
         causal_mask = causal_attention_mask(batch_size, seq_len, seq_len, tf.bool)
+        #causal_mask = tf.expand_dims(causal_mask, axis=1)
+        #causal_mask = tf.transpose(causal_mask, (0, 2, 1))
+        print('causal_mask', causal_mask.shape)
+
         attention_output = self.att(inputs, inputs, attention_mask=causal_mask)
+        
+
         attention_output = self.dropout1(attention_output)
         out1 = self.layernorm1(inputs + attention_output)
         ffn_output = self.ffn(out1)
@@ -240,78 +315,70 @@ class TokenAndPositionEmbedding(layers.Layer):
         #return positions
 
 
-def get_vqvae(input_dim, output_dim):
-    embed_dim = 32  # Embedding size for each token
-    num_heads = 2  # Number of attention heads
-    ff_dim = 32  # Hidden layer size in feed forward network inside transformer
-    vocab_size = 20000  # Only consider the top 20k words
+def get_vqvae(output_dim, latent_dim=num_hidden, num_embeddings=maxlen, input_shape=maxlen):
+    vq_layer = VectorQuantizer(latent_dim, num_embeddings, name="vector_quantizer")
 
-    inputs = layers.Input(shape=(input_dim,))
-    embedding_layer = TokenAndPositionEmbedding(maxlen, vocab_size, embed_dim)
-    x = embedding_layer(inputs)
-    transformer_block = TransformerBlock(embed_dim, num_heads, ff_dim)
-    x = transformer_block(x)
-    x = layers.GlobalAveragePooling1D()(x)
-    x = layers.Dropout(0.1)(x)
-    x = layers.Dense(20, activation="relu")(x)
-    x = layers.Dropout(0.1)(x)
-    action = layers.Dense(output_dim, activation="softmax")(x)
-    critic = layers.Dense(1, activation="relu")(x)
+    embed_dim = 64
+    num_heads = 4
+    ff_dim = 64
+    rate = 0.1
+
+    encoder = TransformerEncoderLayer(embed_dim, num_heads, ff_dim, rate)
+
+    decoder = get_decoder((49, 36, 64), output_dim*4)
+
+
+    inputs = keras.Input(shape=input_shape)
+
+    x = layers.Conv2D(32, (3, 3), activation='relu')(inputs)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Conv2D(64, (3, 3), activation='relu')(x)
+    x = layers.MaxPooling2D((2, 2))(x)
+    x = layers.Conv2D(64, (3, 3), activation='relu')(x)
+
+    #x = layers.Flatten()(x)
+
+    print('x.shape' , x.shape)
+
+    encoder_outputs = encoder(x)
+    quantized_latents = vq_layer(encoder_outputs)
+    print('quantized_latents.shape', quantized_latents.shape)
+
+    common = decoder(quantized_latents)
+
+    common = layers.Flatten()(common)
+
+    action = layers.Dense(output_dim, activation="linear")(common)
+    critic = layers.Dense(1)(common)
 
     model = keras.Model(inputs, outputs=[action, critic], name="vq_vae")
 
     return model
 
 
+state = env.reset()[0]
 
+model_action = get_vqvae(num_actions, input_shape=state.shape)
+model_action.compile()
 
-################################################################################################################
+# def sample_from_categorical(logits, temperature=1.0):
+#     # Add Gumbel noise
+#     gumbel_noise = -tf.math.log(-tf.math.log(tf.random.uniform(shape=tf.shape(logits))))
+#     logits_with_noise = (logits + gumbel_noise) / temperature
 
-# def get_model_action():
-#     inputs = layers.Input(shape=(maxlen,))
-#     common = layers.Dense(num_hidden, activation="relu")(inputs)
-#     action = layers.Dense(num_actions, activation="softmax")(common)
-#     critic = layers.Dense(1)(common)
+#     # Apply softmax to obtain differentiable samples
+#     samples = tf.nn.softmax(logits_with_noise, axis=-1)
 
-#     model_action = keras.Model(inputs=inputs, outputs=[action, critic])
-
-#     return model_action
-
-# def get_model_position():
-#     inputs = layers.Input(shape=(maxlen,))
-#     common = layers.Dense(num_hidden, activation="relu")(inputs)
-#     action = layers.Dense(maxlen, activation="softmax")(common)
-#     critic = layers.Dense(1)(common)
-
-#     model_position = keras.Model(inputs=inputs, outputs=[action, critic])
-
-#     return model_position
-
-# model_action = get_model_action()
-# model_position = get_model_position()
-
-model_action = get_vqvae(maxlen, num_actions)
-
-def sample_from_categorical(logits, temperature=1.0):
-    # Add Gumbel noise
-    gumbel_noise = -tf.math.log(-tf.math.log(tf.random.uniform(shape=tf.shape(logits))))
-    logits_with_noise = (logits + gumbel_noise) / temperature
-
-    # Apply softmax to obtain differentiable samples
-    samples = tf.nn.softmax(logits_with_noise, axis=-1)
-
-    return samples
+#     return samples
 
 """
 ## Train
 """
 
 #optimizer = keras.optimizers.Adam(learning_rate=0.01)
-optimizer = keras.optimizers.Adam()
-optimizer_pos = keras.optimizers.Adam()
+optimizer = keras.optimizers.Adam()#(clipnorm=1.0)
 
 huber_loss = keras.losses.Huber()
-huber_loss_pos = keras.losses.Huber()
 
 action_probs_history = []
 position_probs_history = []
@@ -328,61 +395,128 @@ critic_pos_value_history_next = []
 action_pos_probs_history_next = []
 critic_value_pos_history_next = []
 
+epsilon_random_frames = 50000
+# Number of frames to take random action and observe output
+# Number of frames for exploration
+epsilon_greedy_frames = 1000000.0
+epsilon = 1.0  # Epsilon greedy parameter
+epsilon_min = 0.1  # Minimum epsilon greedy parameter
+epsilon_max = 1.0  # Maximum epsilon greedy parameter
+epsilon_interval = (
+    epsilon_max - epsilon_min
+)  # Rate at which to reduce chance of random action being taken
+
 
 rewards_history = []
 running_reward = 0
 episode_count = 0
 
-state = env.reset()
 
-state = tf.convert_to_tensor(state)
-state = tf.expand_dims(state, 0)
 
-action = 2
-position = 10
-#state = np.array([0, 1, 8, 2, 6, 5, 8, 3, 6, 4, 9, 1, 1, 1, 1])
-
+frame_count = 0
 
 while True:  # Run until solved
-    state = env.reset()
+    state = env.reset()[0]
     episode_reward = 0
-    with tf.GradientTape() as tape, tf.GradientTape() as tape_pos:
-        for timestep in range(1, max_steps_per_episode):
-            # env.render(); Adding this line would show the attempts
-            # of the agent in a pop up window.
+
+    with tf.GradientTape() as tape:
+        for timestep in range(0, max_steps_per_episode):
 
             state = tf.convert_to_tensor(state)
             state = tf.expand_dims(state, 0)
 
-            # Predict action probabilities and estimated future rewards
-            # from environment state
-            action_probs, critic_value = model_action(state)
-            critic_value_history.append(critic_value[0, 0])
+            """
+            #if frame_count % frame_skip == 0:
+            if frame_count < epsilon_random_frames or epsilon > np.random.rand(1)[0]:
+            # Take random action
+                action = np.random.choice(num_actions)
+            else:                
+                # env.render(); Adding this line would show the attempts
+                # of the agent in a pop up window.
 
+                # Predict action probabilities and estimated future rewards
+                # from environment state
+                logits, critic_value = model_action(state)
+                #print('logits', logits)
+                action_probs = tf.nn.softmax(tf.squeeze(logits), axis=-1).numpy()
+                print('action probs', action_probs)
+
+                # Sample action from action probability distribution
+                action = np.random.choice(num_actions, 1, p=np.squeeze(action_probs))[0]
+
+                #action = np.random.choice(num_actions, p=np.squeeze(action_probs))
+                critic_value_history.append(critic_value[0, 0])
+                action_probs_history.append(logits)
+
+            #print(np.squeeze(action_probs), 'action_probs')
+            print(action, 'action')
+            
+            # Decay probability of taking random action
+            epsilon -= epsilon_interval / epsilon_greedy_frames
+            epsilon = max(epsilon, epsilon_min)
+            """
+
+            logits, critic_value = model_action(state)
+            #print('logits', logits)
+            action_probs = tf.nn.softmax(tf.squeeze(logits), axis=-1).numpy()
+            
+            print('action_probs', action_probs.shape)
             # Sample action from action probability distribution
-            action = np.random.choice(num_actions, p=np.squeeze(action_probs))
-            action_probs_history.append(tf.math.log(action_probs[0, action]))
+            action = np.random.choice(num_actions, 1, p=np.squeeze(action_probs))[0]
+
+            print(action, 'action')
+
+            #action = np.random.choice(num_actions, p=np.squeeze(action_probs))
+            critic_value_history.append(critic_value[0, 0])
+            action_probs_history.append(logits)
+
 
             # Apply the sampled action in our environment
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
+            frame_count += 1
+            
 
+
+            for _ in range(2): #range(frame_skip):
+                next_obs, reward, terminated, truncated, info = env.step(action)
+                episode_reward += reward
+                done = terminated or truncated
+                frame_count += 1
+
+            if done:
+                break
+
+            print('next_obs', next_obs.shape)
+
+            reward = (reward+1)*100
+            
             rewards_history.append(reward)
             episode_reward += reward
 
             #calculate advantage
-            action_probs_next, critic_value_next = model_action.predict(tf.convert_to_tensor(tf.expand_dims(state, 0)))
+            action_probs_next, critic_value_next = model_action(tf.expand_dims(next_obs, axis=0), training=False)
             #store values
             action_probs_history_next.append(action_probs_next)
             critic_value_history_next.append(critic_value_next)
 
             state_next = next_obs
             state = state_next
-            if done:
-                break
 
-        # Update running reward to check condition for solving
-        running_reward = 0.05 * episode_reward + (1 - 0.05) * running_reward
+            print('reward=', reward)
+
+
+            # else:
+            #     next_obs, reward, terminated, truncated, info = env.step(action)
+            #     state_next = next_obs
+            #     done = terminated or truncated
+            #     if done:
+            #         break
+
+            
+
+        ## Update running reward to check condition for solving
+        #running_reward = 0.05 * episode_reward + (1 - 0.05) * running_reward
 
         # Calculate expected value from rewards
         # - At each timestep what was the total reward received after that timestep
@@ -402,21 +536,27 @@ while True:  # Run until solved
 
         # Calculating loss values to update our network
         history = zip(action_probs_history, critic_value_history, \
-                      returns,\
-                      critic_value_history_next, critic_value_pos_history_next)
+                    returns,\
+                    critic_value_history_next)
         actor_losses = []
-        actor_pos_losses = []
         critic_losses = []
-        critic_pos_losses = []
-        for log_prob, log_prob_pos, value, value_pos, ret, log_prob_next, value_next, log_prob_pos_next, value_pos_next in history:
+        for log_prob, critic_value, ret, value_next in history:
+            # Calculate advantage
+            advantage = ret + gamma * value_next - critic_value
+            critic_loss = tf.cast(tf.math.pow(advantage, 2), dtype=tf.double)
+
             # At this point in history, the critic estimated that we would get a
             # total reward = `value` in the future. We took an action with log probability
             # of `log_prob` and ended up recieving a total reward = `ret`.
             # The actor must be updated so that it predicts an action that leads to
             # high rewards (compared to critic's estimate) with high probability.
-            diff = ret - value
-            actor_losses.append(-log_prob * diff)  # actor loss
+            log_prob = tf.cast(log_prob, tf.double)
+            action = tf.random.categorical(log_prob, num_samples=1) #num_actions
 
+            actor_loss = -tf.cast(action, dtype=tf.double) * tf.cast(advantage, dtype=tf.double)
+
+                ###########################################################################
+            #############################################################################
 
             # # The critic must be updated so that it predicts a better estimate of
             # # the future rewards.
@@ -428,14 +568,16 @@ while True:  # Run until solved
             #     huber_loss_pos(tf.expand_dims(value_pos, 0), tf.expand_dims(ret, 0))
             # )
 
-            # Calculate advantage
-            advantage = reward + gamma * value_next - value
+            
             # Update Critic
-            critic_losses.append(tf.math.pow(advantage,2))
+            actor_losses.append(tf.cast(actor_loss, dtype=tf.float32))
+            critic_losses.append(tf.cast(critic_loss, dtype=tf.float32))
 
+        #if len(actor_losses)>0 and len(critic_losses)>0:
         # Backpropagation
         loss_value = sum(actor_losses) + sum(critic_losses)
         grads = tape.gradient(loss_value, model_action.trainable_variables)
+        #print(grads)
         optimizer.apply_gradients(zip(grads, model_action.trainable_variables))
 
         # Clear the loss and reward history
@@ -447,15 +589,21 @@ while True:  # Run until solved
 
         rewards_history.clear()
 
+    if done:
+        break
+
     # Log details
     episode_count += 1
     if episode_count % 10 == 0:
         template = "running reward: {:.2f} at episode {}"
-        print(template.format(running_reward, episode_count))
+        print(template.format(reward, episode_count))
 
-    if running_reward > 195:  # Condition to consider the task solved
-        print("Solved at episode {}!".format(episode_count))
-        break
+    # if np.mean(rewards_history) > 21*100:  # Condition to consider the task solved
+    #     print("Solved at episode {}!".format(episode_count))
+    #     break
+
+
+print('OUT OF LOOP')
 
 
 """
