@@ -1,151 +1,229 @@
 import tensorflow as tf
 from tensorflow.keras import layers
-from tensorflow.keras.initializers import RandomNormal
-from transformer_keras_io import *
-from tensorflow.keras import layers, models, Input
 
-
-
-def dfs(encoded_tree, input_layer):
+def dfs(tree_encoding, leaf_nodes):
     """
-    Perform a DFS on an n-ary tree encoded as a binary string.
-    This function assumes '1' represents the start of a new node,
-    and '0' represents the end of a node's children (moving back up the tree).
+    Build a tree-based model using DFS encoded tree string (upside down).
 
-    :param encoded_tree: A binary string encoding of the n-ary tree.
-    :return: None
+    :param leaf_nodes: List of leaf nodes (several root nodes in the upside-down view).
+    :param tree_encoding: Encoded tree string.
+    :return: Tree-based model.
     """
+    model_dict = {}  # Dictionary to store model connections
+    output_layers = []
 
-    def dfs_helper(index, depth, input_layer):
-        """
-        Helper function for DFS.
+    # Start the DFS from the end of the encoded string for each leaf node.
+    for leaf_node in leaf_nodes:
+        input_layer = leaf_node
+        _, output = dfs_helper(tree_encoding, input_layer, model_dict, 0)
+        output_layers.append(output)
 
-        :param index: Current index in the binary string.
-        :param depth: Current depth in the tree for visualization.
-        :return: The next index to process after completing the current subtree.
-        """
-        # Base case: If we reach the end of the string, return.
-        if index >= len(encoded_tree):
-            # x = layers.Conv1D(64, 3, padding='same', activation='relu', kernel_regularizer=tf.keras.regularizers.l2(0.001))(input_layer[-1])
-            # x = layers.MaxPooling1D(2, strides=2, padding='same')(x)
-            return index, input_layer
-
-        # Assuming '1' is a node, print it or process it here.
-        print(f"{'  ' * depth}Node at depth {depth}")
-        input_layer = inception_module(input_layer,
-                         filters_1x1=64,
-                         filters_3x3_reduce=96,
-                         filters_3x3=128,
-                         filters_5x5_reduce=16,
-                         filters_5x5=32,
-                         filters_pool_proj=32)
-
-        # Move to the next character in the encoded string.
-        index += 1
-
-        # Go deeper into the tree as long as we encounter '1's, indicating more children/subtrees.
-        #in_layers = [input_layer[-1]]
-        #input_layer_local = input_layer[-1]
-        while index < len(encoded_tree) and encoded_tree[index] == '1':
-            
-            # Recursive call to process each child, updating the index each time.
-            #in_layers.append(input_layer_local)
-
-            index, input_layer = dfs_helper(index, depth + 1, input_layer)
-
-        # Once we encounter a '0', it means we are done with this node's children and can go back up.
-        return index + 1, input_layer  # Skip the '0' and move to the next part of the encoded tree.
-
-    # Start the DFS from the beginning of the encoded string and at depth 0.
-    _, out = dfs_helper(0, 0, input_layer)
-
-    return out
+    return output_layers
 
 
-def build_tree_model(input_shape, num_classes, tree_encoding, max_length, vocab_size, embedding_dim):
+def dfs_helper(structure, input_layer, model_dict, index):
+    """
+    Helper function for DFS.
+
+    :param structure: Node structure indicating how many children each node has.
+    :param input_layer: Input layer of the model.
+    :param model_dict: Dictionary to store model connections.
+    :return: The output layer of the current subtree.
+    """
+    if structure[index] == 0:  # Leaf node
+        m_out = conv_module(input_layer)
+        return structure, m_out
+
+    structure, left_child = dfs_helper(structure, input_layer, model_dict, index+1)
+
+    m_out = conv_module(left_child)
+    return structure, m_out
+
+
+# # Adjusted helper function for DFS traversal
+# def dfs_helper(index, encoded_tree, depth, input_layer, model_dict):
+#     """
+#     Helper function for DFS (upside down).
+
+#     :param index: Current index in the binary string.
+#     :param depth: Current depth in the tree for visualization.
+#     :param input_layer: Input layer of the model.
+#     :param model_dict: Dictionary to store model connections.
+#     :return: The next index to process after completing the current subtree.
+#     """
+#     # Base case: If we reach the beginning of the string, return.
+#     if index < 0:
+#         #m_out = conv_module(input_layer)
+#         return index, input_layer
+
+#     # Move to the previous character in the encoded string.
+#     index -= 1
+
+#     # Apply conv_module to create a convolutional layer for the current node
+#     m_out = conv_module(input_layer)
+
+#     # Add current node output to the model dictionary
+#     try:
+#         model_dict[index].append(m_out)
+#     except:
+#         model_dict[index] = [m_out]
+
+#     # Create branches for each child node represented by '1's in the binary string
+#     while index >= 0 and encoded_tree[index] == '1':
+#         # Recursive call to process each child, updating the index and depth
+#         #index, _ = dfs_helper(index, encoded_tree, depth + 1, current_node_output, model_dict)
+#         index, m_out = dfs_helper(index, encoded_tree, depth + 1, m_out, model_dict)
+#         model_dict[index].append(m_out)
+
+#     # Once we encounter a '0' or reach the beginning of the string, it means we are done with this node's children and can go back up.
+#     return index, m_out, model_dict  # Return the index and output of the current node
+
+
+####################################################################################
+
+# def dfs(tree_structure, input_layer):
+#     """
+#     Build a tree-based model using DFS based on the provided tree structure.
+
+#     :param tree_structure: List representing the tree structure.
+#     :param input_layer: Input layer of the model.
+#     :return: List of output layers corresponding to each leaf node.
+#     """
+#     model_dict = {}  # Dictionary to store model connections
+#     output_layers = []
+
+#     # Start the DFS from the root node.
+#     for i, structure in enumerate(tree_structure):
+#         _, output = dfs_helper(structure, input_layer, model_dict)
+#         output_layers.append(output)
+
+#     return output_layers
+
+# def dfs_helper(structure, input_layer, model_dict):
+#     """
+#     Helper function for DFS.
+
+#     :param structure: Node structure indicating how many children each node has.
+#     :param input_layer: Input layer of the model.
+#     :param model_dict: Dictionary to store model connections.
+#     :return: The output layer of the current subtree.
+#     """
+#     if structure == 0:  # Leaf node
+#         m_out = conv_module(input_layer)
+#         return structure, m_out
+
+#     left_child, right_child = dfs_helper(structure - 1, input_layer, model_dict), dfs_helper(structure - 1, input_layer, model_dict)
+
+#     concat_layer = layers.Concatenate()([left_child[1], right_child[1]])
+#     m_out = conv_module(concat_layer)
+#     return structure, m_out
+
+def build_tree_model(input_shape, tree_structure, num_classes):
+
+    # Input layer
     input_layer = layers.Input(shape=input_shape)
-    x = input_layer
 
-    embedding_layer = TokenAndPositionEmbedding(max_length, vocab_size, embedding_dim)
-    x = embedding_layer(x)
-    print(x)
-    print(x.shape)
+    # Char level branch
+    conv1d_char = layers.Conv1D(filters=64, kernel_size=3, activation='relu')(input_layer)
 
-    # x = layers.Conv1D(64, 7, padding='same', strides=2, activation='relu')(x)
-    # x = layers.MaxPooling1D(3, padding='same', strides=2)(x)
-    # x = layers.Conv1D(192, 3, padding='same', activation='relu')(x)
-    # x = layers.MaxPooling1D(3, padding='same', strides=2)(x)
+    # Word/Token Level Branch
+    conv1d_word = layers.Conv1D(filters=128, kernel_size=3, activation='relu')(conv1d_char)
 
-    x = dfs(tree_encoding, x)
+    # Sentence Level Branch
+    conv1d_sentence = layers.Conv1D(filters=256, kernel_size=5, activation='relu')(conv1d_word)
 
-    print(x)
-    print(x.shape)
+    # Document Level Branch
+    conv1d_document = layers.Conv1D(filters=512, kernel_size=7, activation='relu')(conv1d_sentence)
 
-    x = layers.MaxPooling1D(3, padding='same', strides=2)(x)
 
-    # Simplified to avoid a very long implementation
-    # Typically, GoogLeNet would have more inception modules here
+    xs = dfs(tree_structure, [conv1d_char, conv1d_word, conv1d_sentence, conv1d_document])
 
-    x = layers.AveragePooling1D(7, strides=1)(x)
-    x = layers.Dropout(0.4)(x)
+    flattened_outputs = [layers.Flatten()(xi) for xi in xs]
+
+    x = layers.Concatenate(axis=-1)(flattened_outputs)
+
+    x = layers.Dense(1000, activation='relu')(x)
+    x = layers.Dense(256, activation='relu')(x)
+    output_layer = layers.Dense(num_classes, activation='softmax')(x)
+
+    model = tf.keras.Model(inputs=input_layer, outputs=output_layer)
+    return model
+
+def conv_module(x):
+    x = layers.Conv1D(filters=128, kernel_size=3, activation='relu', padding='same')(x)
+    x = layers.MaxPooling1D()(x)
+    return x
+
+def build_tree_model(input_shape, tree_encoding, num_classes):
+    num_filters = 1024
+    kernel_sizes = [7, 7, 3, 3, 3, 3]
+    pool_size = 3
+    stride_length = 3
+
+    # Input layer
+    input_layer = layers.Input(shape=input_shape)
+
+    # Char level branch
+    conv1d_char = layers.Conv1D(filters=64, kernel_size=3, activation='relu')(input_layer)
+
+    # Word/Token Level Branch
+    conv1d_word = layers.Conv1D(filters=128, kernel_size=3, activation='relu')(conv1d_char)
+
+    # Sentence Level Branch
+    conv1d_sentence = layers.Conv1D(filters=256, kernel_size=5, activation='relu')(conv1d_word)
+
+    # Document Level Branch
+    conv1d_document = layers.Conv1D(filters=512, kernel_size=7, activation='relu')(conv1d_sentence)
+    # max_pooling_document = layers.GlobalMaxPooling1D()(conv1d_document)
+
+    #########################################
+
+    # conv1d_char = layers.Flatten()(conv1d_char)
+
+    # conv1d_word = layers.Flatten()(conv1d_word)
+    # conv1d_sentence = layers.Flatten()(conv1d_sentence)
+    # max_pooling_document = layers.Flatten()(max_pooling_document)
+
+
+    #########################################
+
+    # # Concatenate branches
+    # x = layers.Concatenate(axis=-1)([conv1d_char, conv1d_word, conv1d_sentence, max_pooling_document])
+
+    # x = layers.Reshape((109824, 1))(x)
+
+    # Perform DFS traversal to respect the tree structure
+    xs = dfs(tree_encoding, [conv1d_char, conv1d_word, conv1d_sentence, conv1d_document])
+
+    flattened_outputs = []
+    for xi in xs:
+        xout = layers.Flatten()(xi)
+        flattened_outputs.append(xout)
+
+    x = layers.Concatenate(axis=-1)(flattened_outputs)
+
+    #x = layers.Dropout(0.4)(x)
     x = layers.Flatten()(x)
     x = layers.Dense(1000, activation='relu')(x)
-
-    # Fully Connected Layer
     x = layers.Dense(256, activation='relu')(x)
-
-    # Output Layer
-    #output_layer = Dense(num_classes, activation='softmax')(x)
-    output_layer = layers.Dense(1, activation='sigmoid')(x)
+    output_layer = layers.Dense(num_classes, activation='softmax')(x)
 
     model = tf.keras.Model(inputs=input_layer, outputs=output_layer)
     return model
 
 
-
-def inception_module(x,
-                     filters_1x1,
-                     filters_3x3_reduce,
-                     filters_3x3,
-                     filters_5x5_reduce,
-                     filters_5x5,
-                     filters_pool_proj):
-    
-    conv_1x1 = layers.Conv1D(filters_1x1, 1, padding='same', activation='relu')(x)
-
-    conv_3x3 = layers.Conv1D(filters_3x3_reduce, 1, padding='same', activation='relu')(x)
-    conv_3x3 = layers.Conv1D(filters_3x3, 3, padding='same', activation='relu')(conv_3x3)
-
-    conv_5x5 = layers.Conv1D(filters_5x5_reduce, 1, padding='same', activation='relu')(x)
-    conv_5x5 = layers.Conv1D(filters_5x5, 5, padding='same', activation='relu')(conv_5x5)
-
-    pool_proj = layers.MaxPooling1D(3, strides=1, padding='same')(x)
-    pool_proj = layers.Conv1D(filters_pool_proj, 1, padding='same', activation='relu')(pool_proj)
-
-    output = layers.concatenate([conv_1x1, conv_3x3, conv_5x5, pool_proj], axis=-1)
-    print('inception module output ', output.shape)
-    return output
-
-# def googlenet(x):
+def conv_module(x):
+    x = layers.Conv1D(filters=128, kernel_size=3, activation='relu', padding='same')(x)
+    x = layers.MaxPooling1D()(x)
+    #x = layers.Dropout(0.5)(x)
+    return x
 
 
-
-#     x = inception_module(x,
-#                          filters_1x1=128,
-#                          filters_3x3_reduce=128,
-#                          filters_3x3=192,
-#                          filters_5x5_reduce=32,
-#                          filters_5x5=96,
-#                          filters_pool_proj=64)
-    
-
-
-#     return x
-
-
-model = build_tree_model((128), 5, "111001000", 150, 1000, 256)
-
+# Example usage
+tree_structure = [1, 1, 0, 1, 0, 0, 0]
+model = build_tree_model((250, 68), tree_structure, 52)
 model.summary()
+
 
 from tensorflow.keras.utils import plot_model
 plot_model(model, to_file='tree_based_model.png', show_shapes=True, show_layer_names=True)
