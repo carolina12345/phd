@@ -15,13 +15,13 @@ def get_last_layers(model_dict):
     # Identify input nodes not connected to any other nodes
     input_nodes = [input_node for input_node in range(max_index + 1) if input_node not in model_dict]
 
-    # If there are input nodes not connected to any other nodes, return them
-    if input_nodes:
-        print('returning input nodes')
-        return input_nodes, model_dict[max_index]
+    # # If there are input nodes not connected to any other nodes, return them
+    # if input_nodes:
+    #     return input_nodes
 
     # If all input nodes are connected, return the last layers from the model_dict
-    return [], model_dict[max_index]
+    return model_dict[max_index], input_nodes
+
 
 
 def dfs(tree_encoding, leaf_nodes):
@@ -49,8 +49,8 @@ def dfs(tree_encoding, leaf_nodes):
     # Return the output layers and the model dictionary
     #return layers.Flatten()(model_dict[0]), model_dict
 
-    last_layers = get_last_layers(model_dict)
-    return last_layers, model_dict
+    last_layers, loose_input_nodes = get_last_layers(model_dict)
+    return last_layers, loose_input_nodes, model_dict
 
 def dfs_helper(tree_encoding, input_layer, model_dict, index):
     """
@@ -90,9 +90,6 @@ def dfs_helper(tree_encoding, input_layer, model_dict, index):
 # Rest of the code remains the same
 
 
-
-
-
 def build_tree_model(input_shape, tree_encoding, num_classes):
     input_layer = layers.Input(shape=input_shape)
     input_layer2 = layers.Input(shape=input_shape)
@@ -100,7 +97,7 @@ def build_tree_model(input_shape, tree_encoding, num_classes):
 
     inputs_list = [input_layer, input_layer2, input_layer3]
 
-    (loose_inputs, output_layers), model_dict = dfs(tree_encoding, inputs_list)
+    output_layers, loose_input_nodes, model_dict = dfs(tree_encoding, inputs_list)
 
     flattened_outputs = [layers.Flatten()(output_layer) for output_layer in output_layers]
 
@@ -109,6 +106,11 @@ def build_tree_model(input_shape, tree_encoding, num_classes):
     else:
         x = flattened_outputs[0]
 
+    if loose_input_nodes:
+        x1 = layers.Concatenate(axis=1)(inputs_list)
+        x1 = conv_module(x1)
+        x1 = layers.Flatten()(x1)
+        x = layers.Concatenate(axis=1)([x, x1])
     
     x = layers.Dense(1000, activation='relu')(x)
     x = layers.Dense(256, activation='relu')(x)
@@ -126,14 +128,15 @@ def conv_module(x):
     x = layers.MaxPooling1D()(x)
     return x
 
-# Example usage
-tree_encoding = "1111011010001000001"
+# # Example usage
+# tree_encoding = "111101101000100011001"
 
-model, model_dict = build_tree_model((64, 256,), tree_encoding, 10)
-print(model.summary())
-print("Model Dictionary:", model_dict)
+# model, model_dict = build_tree_model((64, 256,), tree_encoding, 10)
+
+# print(model.summary())
+# print("Model Dictionary:", model_dict)
 
 
 
-from tensorflow.keras.utils import plot_model
-plot_model(model, to_file='tree_based_model.png', show_shapes=True, show_layer_names=True)
+# from tensorflow.keras.utils import plot_model
+# plot_model(model, to_file='tree_based_model2.png', show_shapes=True, show_layer_names=True)
