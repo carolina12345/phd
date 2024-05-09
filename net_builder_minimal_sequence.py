@@ -91,26 +91,41 @@ def dfs_helper(tree_encoding, input_layer, model_dict, index):
 
 
 def build_tree_model(input_shape, tree_encoding, num_classes):
-    input_layer = layers.Input(shape=input_shape)
-    input_layer2 = layers.Input(shape=input_shape)
-    input_layer3 = layers.Input(shape=input_shape)
 
-    inputs_list = [input_layer, input_layer2, input_layer3]
+
+    # Input layer
+    input_layer = layers.Input(shape=input_shape)
+
+    # Word/Token Level Branch
+    conv1d_word = layers.Conv1D(filters=128, kernel_size=3, activation='relu')(input_layer)
+
+    # Sentence Level Branch
+    conv1d_sentence = layers.Conv1D(filters=256, kernel_size=5, activation='relu')(conv1d_word)
+
+    # Document Level Branch
+    conv1d_document = layers.Conv1D(filters=512, kernel_size=7, activation='relu')(conv1d_sentence)
+    max_pooling_document = layers.GlobalMaxPooling1D()(conv1d_document)
+
+    # Concatenate branches
+    #concatenated_output = layers.Concatenate(axis=-1)([conv1d_word, conv1d_sentence, max_pooling_document])
+
+
+    inputs_list = [conv1d_word, conv1d_sentence, conv1d_document]
 
     output_layers, loose_input_nodes, model_dict = dfs(tree_encoding, inputs_list)
 
-    flattened_outputs = [layers.Flatten()(output_layer) for output_layer in output_layers]
+    flattened_outputs = [layers.Flatten()(output_layer) for output_layer in output_layers+[conv1d_word, conv1d_sentence, max_pooling_document]]
 
     if len(flattened_outputs)>1:
         x = layers.Concatenate(axis=1)(flattened_outputs)
     else:
         x = flattened_outputs[0]
 
-    if loose_input_nodes:
-        x1 = layers.Concatenate(axis=1)(inputs_list)
-        x1 = conv_module(x1)
-        x1 = layers.Flatten()(x1)
-        x = layers.Concatenate(axis=1)([x, x1])
+    # if loose_input_nodes:
+    #     x1 = layers.Concatenate(axis=1)(inputs_list)
+    #     x1 = conv_module(x1)
+    #     x1 = layers.Flatten()(x1)
+    #     x = layers.Concatenate(axis=1)([x, x1])
     
     x = layers.Dense(1000, activation='relu')(x)
     x = layers.Dense(256, activation='relu')(x)
@@ -120,8 +135,8 @@ def build_tree_model(input_shape, tree_encoding, num_classes):
     # for inpt in loose_inputs:
     #     inputs_list.pop(inpt)
 
-    model = tf.keras.Model(inputs=inputs_list, outputs=oupt)
-    return model, model_dict
+    model = tf.keras.Model(inputs=input_layer, outputs=oupt)
+    return model#, model_dict
 
 def conv_module(x):
     x = layers.Conv1D(filters=128, kernel_size=3, activation='relu', padding='same')(x)
@@ -131,7 +146,7 @@ def conv_module(x):
 # # Example usage
 # tree_encoding = "111101101000100011001"
 
-# model, model_dict = build_tree_model((64, 256,), tree_encoding, 10)
+# model, model_dict = build_tree_model((64, 256), tree_encoding, 10)
 
 # print(model.summary())
 # print("Model Dictionary:", model_dict)
@@ -139,4 +154,4 @@ def conv_module(x):
 
 
 # from tensorflow.keras.utils import plot_model
-# plot_model(model, to_file='tree_based_model2.png', show_shapes=True, show_layer_names=True)
+# plot_model(model, to_file='tree_based_model3.png', show_shapes=True, show_layer_names=True)
