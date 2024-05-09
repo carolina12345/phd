@@ -4,20 +4,94 @@ from tensorflow.keras.datasets import imdb
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
 
-# Load the IMDb dataset
-(x_train, y_train), (x_test, y_test) = imdb.load_data(num_words=10000)
+from sklearn import preprocessing
+import numpy as np
+import pandas as pd
 
-x_train, x_val, y_train, y_val = train_test_split(x_train, y_train, test_size=0.2, random_state=42)
+# Replace 'your_dataset.csv' with the actual path to your CSV file
+csv_file = 'sns24_dataset/train_set.csv'
+
+# Load the CSV file into a DataFrame
+df = pd.read_csv(csv_file, encoding='utf-8')
+
+# # Display the DataFrame
+# print(df)
+
+column_name = 'motivo contacto'
+input = df[column_name].tolist()
+
+column_name = 'ultimo algoritmo'
+output = df[column_name].tolist()
+
+import nltk
+from tensorflow.keras.preprocessing.text import Tokenizer
+
+# Get the list of Portuguese stopwords
+stop_words = nltk.corpus.stopwords.words('portuguese')
+
+# Function to preprocess and tokenize text while filtering out stopwords
+def preprocess_text(text):
+    
+    # Remove stopwords
+    filtered_words = [word for word in text if word.lower() not in stop_words]
+    
+    return ' '.join(filtered_words)
+
+# Preprocess the text data
+preprocessed_texts = [preprocess_text(text) for text in input]
+
+
+#output
+
+#categorize output
+from sklearn import preprocessing
+
+
+le = preprocessing.OneHotEncoder()
+categorical_labels = le.fit_transform(np.reshape(output, (-1,1))).toarray()
+
+total_elems = len(le.categories_[0])
+
+
+def one_hot_encode_char(char, char_dict):
+    # Create a zero vector of the length equal to the dictionary size
+    one_hot_vector = np.zeros(len(char_dict))
+    # Set the position corresponding to the char to 1
+    one_hot_vector[char_dict[char]] = 1
+    return one_hot_vector
+
+def one_hot_encode_sentences(sentences, char_dict, max_length):
+    # Initialize the encoded data array
+    encoded_data = np.zeros((len(sentences), max_length, len(char_dict)), dtype=np.float32)
+    
+    # Encode each sentence
+    for i, sentence in enumerate(sentences):
+        for j, char in enumerate(sentence):
+            if char in char_dict:
+                encoded_data[i, j] = one_hot_encode_char(char, char_dict)
+    return encoded_data
+
+# Example usage
+sentences = preprocessed_texts
+char_dict = {ch: idx for idx, ch in enumerate(sorted(set('abcdefghijklmnopqrstuvwxyz0123456789-,;.`!?:/\|_@#$%^&* ̃‘+-=<>()[]{}')))}
+max_length = max(len(sentence) for sentence in sentences)
+
+encoded_sentences = one_hot_encode_sentences(sentences, char_dict, max_length)
+
+print("Encoded sentences shape:", encoded_sentences.shape)
+print("Encoded data for 'hello':\n", encoded_sentences[0])
+
+
+
+x_train, x_val, y_train, y_val = train_test_split(encoded_sentences, categorical_labels, test_size=0.2, random_state=42)
 
 # Pad sequences to a fixed length
-max_sequence_length = 250
+max_sequence_length = max_length
 x_train = pad_sequences(x_train, maxlen=max_sequence_length)
 x_val = pad_sequences(x_val, maxlen=max_sequence_length)
-x_test = pad_sequences(x_test, maxlen=max_sequence_length)
 
 # Print information about the datasets
 print(f"Number of training examples: {len(x_train)}")
-print(f"Number of testing examples: {len(x_test)}")
 
 # Define the model
 """
@@ -58,7 +132,7 @@ from tensorflow.keras import layers
 #from custom_environment2 import NASEnvironment
 from custom_environment3 import NASEnvironment
 
-sequence_len = 15
+sequence_len = 20
 maxlen = sequence_len
 num_inputs = maxlen
 num_actions = 3
@@ -69,7 +143,7 @@ num_hidden = 128
 seed = 42
 gamma = 0.99  # Discount factor for past rewards
 max_steps_per_episode = 2 #10000
-env = NASEnvironment(x_train, y_train, x_val, y_val, x_test, y_test, epochs=7, sequence_len=sequence_len)
+env = NASEnvironment(x_train, y_train, x_val, y_val, x_val, y_val, epochs=15, sequence_len=sequence_len)
 eps = np.finfo(np.float32).eps.item()  # Smallest number such that 1.0 + eps != 1.0
 
 

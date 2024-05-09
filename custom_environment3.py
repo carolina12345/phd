@@ -21,10 +21,10 @@ class NASEnvironment():
         self.embedding_dim = 32
         self.max_length = 250
 
-        self.batch_size = 32
+        self.batch_size = 16
         #initial network parameters
-        self.input_shape = (self.max_length)  # (batch_size, input_length, input_channels)
-        self.num_classes = 2
+        self.input_shape = train_features[0].shape # (batch_size, input_length, input_channels)
+        self.num_classes = 52
         
         self.cut_value = 2
 
@@ -100,9 +100,8 @@ class NASEnvironment():
             float_strings = [str(int(float_value)) for float_value in self.evaluate_state]
             print(''.join(float_strings))
 
-
-            model = build_tree_model(self.input_shape, self.num_classes, ''.join(float_strings), self.max_length, self.vocab_size, self.embedding_dim)
-            model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+            model = build_tree_model(self.input_shape, ''.join(float_strings), self.num_classes)
+            model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
             
             model.summary()
 
@@ -110,13 +109,13 @@ class NASEnvironment():
                 self.train_features, self.train_labels, batch_size=self.batch_size, epochs=self.epochs, validation_data=(self.validation_features, self.validation_labels)
             )
 
-            predictions = model.predict(self.eval_features)
+            #predictions = model.predict(self.eval_features)
 
-            prdictions_binary = (predictions >= 0.5).astype(int)
+            #prdictions_binary = (predictions >= 0.5).astype(int)
             
             # Access training accuracy from the history object
             #training_accuracy = history.history['val_accuracy']
-            training_accuracy = accuracy_score(self.eval_labels, prdictions_binary)*100
+            training_accuracy = history.history['val_accuracy'][-1]*100
 
 
             #model evaluation
@@ -149,9 +148,13 @@ class NASEnvironment():
             self.seen_states.append(tuple(self.state, reward))
 
             return self.state, reward, done, {} #info
-        except:
+        except Exception as e:
+            print('Error when building model: ', e)
+
             self.last_state = self.state
             self.last_reward = 0
+
+            
 
             return self.state, 0, False, {}
 
