@@ -139,7 +139,7 @@ def build_tree_model(input_shape, tree_encoding, num_classes):
     return model#, model_dict
 
 def conv_module(x):
-    x = layers.Conv1D(filters=128, kernel_size=3, activation='relu', padding='same')(x)
+    x = layers.Conv1D(filters=128, kernel_size=3, activation='relu', padding='same', kernel_regularizer=tf.keras.regularizers.l2(0.01))(x)
     x = layers.MaxPooling1D()(x)
     return x
 

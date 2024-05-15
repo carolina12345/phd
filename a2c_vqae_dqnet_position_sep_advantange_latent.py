@@ -143,7 +143,7 @@ num_hidden = 128
 seed = 42
 gamma = 0.99  # Discount factor for past rewards
 max_steps_per_episode = 2 #10000
-env = NASEnvironment(x_train, y_train, x_val, y_val, x_val, y_val, epochs=15, sequence_len=sequence_len)
+env = NASEnvironment(x_train, y_train, x_val, y_val, x_val, y_val, epochs=10, sequence_len=sequence_len)
 eps = np.finfo(np.float32).eps.item()  # Smallest number such that 1.0 + eps != 1.0
 
 
@@ -466,9 +466,10 @@ state = tf.expand_dims(state, 0)
 while True:  # Run until solved
     state = env.reset()
     episode_reward = 0
-    #with tf.GradientTape() as tape, tf.GradientTape() as tape_pos:
-    with tf.GradientTape() as tape:
+    with tf.GradientTape() as tape, tf.GradientTape() as tape_pos:
         for timestep in range(1, max_steps_per_episode):
+        #with tf.GradientTape() as tape:
+        
             # env.render(); Adding this line would show the attempts
             # of the agent in a pop up window.
 
@@ -571,18 +572,18 @@ while True:  # Run until solved
             # Update Critic
             critic_pos_losses.append(tf.math.pow(advantage_pos,2))
 
-    # Backpropagation
-    # loss_value = sum(actor_losses) + sum(critic_losses)
-    # grads = tape.gradient(loss_value, model_action.trainable_variables)
-    # optimizer.apply_gradients(zip(grads, model_action.trainable_variables))
+        # Backpropagation
+        loss_value = sum(actor_losses) + sum(critic_losses)
+        grads = tape.gradient(loss_value, model_action.trainable_variables)
+        optimizer.apply_gradients(zip(grads, model_action.trainable_variables))
 
-    # loss_value_pos = sum(actor_pos_losses) + sum(critic_pos_losses)
-    # grads_pos = tape_pos.gradient(loss_value_pos, model_position.trainable_variables)
-    # optimizer_pos.apply_gradients(zip(grads_pos, model_position.trainable_variables))
-            
-    loss_value = sum(actor_losses) + sum(critic_losses) + sum(actor_pos_losses) + sum(critic_pos_losses)
-    grads = tape.gradient(loss_value, model_action.trainable_variables+model_position.trainable_variables)
-    optimizer.apply_gradients(zip(grads, model_action.trainable_variables+model_position.trainable_variables))
+        loss_value_pos = sum(actor_pos_losses) + sum(critic_pos_losses)
+        grads_pos = tape_pos.gradient(loss_value_pos, model_position.trainable_variables)
+        optimizer_pos.apply_gradients(zip(grads_pos, model_position.trainable_variables))
+                
+        # loss_value = sum(actor_losses) + sum(critic_losses) + sum(actor_pos_losses) + sum(critic_pos_losses)
+        # grads = tape.gradient(loss_value, model_action.trainable_variables+model_position.trainable_variables)
+        # optimizer.apply_gradients(zip(grads, model_action.trainable_variables+model_position.trainable_variables))
 
     # Clear the loss and reward history
     action_probs_history.clear()

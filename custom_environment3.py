@@ -115,7 +115,7 @@ class NASEnvironment():
             
             # Access training accuracy from the history object
             #training_accuracy = history.history['val_accuracy']
-            training_accuracy = history.history['val_accuracy'][-1]*100
+            training_accuracy = np.mean(history.history['accuracy'])*100
 
 
             #model evaluation
@@ -130,11 +130,7 @@ class NASEnvironment():
             if reward>self.satisfaction_limit:
                 done = True
                 # Save the model architecture to JSON
-                model_json = model.to_json()
-                with open('final_model.json', 'w') as json_file:
-                    json_file.write(model_json)
-                model.save('final_model.h5')
-                print(self.state)
+                tf.keras.models.save_model(model, 'final_model')
 
                 # Pickle the list
                 with open('winner_state.pkl', 'wb') as f:
@@ -145,7 +141,7 @@ class NASEnvironment():
             self.last_reward = reward
             self.last_state = self.state
 
-            self.seen_states.append(tuple(self.state, reward))
+            #self.seen_states.append(tuple(self.state, reward))
 
             return self.state, reward, done, {} #info
         except Exception as e:
@@ -153,8 +149,6 @@ class NASEnvironment():
 
             self.last_state = self.state
             self.last_reward = 0
-
-            
 
             return self.state, 0, False, {}
 
