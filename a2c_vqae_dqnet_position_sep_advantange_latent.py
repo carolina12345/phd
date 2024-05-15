@@ -452,20 +452,22 @@ rewards_history = []
 running_reward = 0
 episode_count = 0
 
+rewards2save = []
+
 state = env.reset()
 
 state = tf.convert_to_tensor(state)
 state = tf.expand_dims(state, 0)
 
-action = 2
-position = 10
+
 #state = np.array([0, 1, 8, 2, 6, 5, 8, 3, 6, 4, 9, 1, 1, 1, 1])
 
 
 while True:  # Run until solved
     state = env.reset()
     episode_reward = 0
-    with tf.GradientTape() as tape, tf.GradientTape() as tape_pos:
+    #with tf.GradientTape() as tape, tf.GradientTape() as tape_pos:
+    with tf.GradientTape() as tape:
         for timestep in range(1, max_steps_per_episode):
             # env.render(); Adding this line would show the attempts
             # of the agent in a pop up window.
@@ -494,6 +496,7 @@ while True:  # Run until solved
             # Apply the sampled action in our environment
             state, reward, done, _ = env.step((action, action_pos))
             rewards_history.append(reward)
+            rewards2save.append(reward)
             episode_reward += reward
 
             #calculate advantage
@@ -568,29 +571,33 @@ while True:  # Run until solved
             # Update Critic
             critic_pos_losses.append(tf.math.pow(advantage_pos,2))
 
-        # Backpropagation
-        loss_value = sum(actor_losses) + sum(critic_losses)
-        grads = tape.gradient(loss_value, model_action.trainable_variables)
-        optimizer.apply_gradients(zip(grads, model_action.trainable_variables))
+    # Backpropagation
+    # loss_value = sum(actor_losses) + sum(critic_losses)
+    # grads = tape.gradient(loss_value, model_action.trainable_variables)
+    # optimizer.apply_gradients(zip(grads, model_action.trainable_variables))
 
-        loss_value_pos = sum(actor_pos_losses) + sum(critic_pos_losses)
-        grads_pos = tape_pos.gradient(loss_value_pos, model_position.trainable_variables)
-        optimizer_pos.apply_gradients(zip(grads_pos, model_position.trainable_variables))
+    # loss_value_pos = sum(actor_pos_losses) + sum(critic_pos_losses)
+    # grads_pos = tape_pos.gradient(loss_value_pos, model_position.trainable_variables)
+    # optimizer_pos.apply_gradients(zip(grads_pos, model_position.trainable_variables))
+            
+    loss_value = sum(actor_losses) + sum(critic_losses) + sum(actor_pos_losses) + sum(critic_pos_losses)
+    grads = tape.gradient(loss_value, model_action.trainable_variables+model_position.trainable_variables)
+    optimizer.apply_gradients(zip(grads, model_action.trainable_variables+model_position.trainable_variables))
 
-        # Clear the loss and reward history
-        action_probs_history.clear()
-        critic_value_history.clear()
+    # Clear the loss and reward history
+    action_probs_history.clear()
+    critic_value_history.clear()
 
-        action_pos_probs_history.clear()
-        critic_value_pos_history.clear()
+    action_pos_probs_history.clear()
+    critic_value_pos_history.clear()
 
-        action_probs_history_next.clear()
-        critic_value_history_next.clear()
+    action_probs_history_next.clear()
+    critic_value_history_next.clear()
 
-        action_pos_probs_history_next.clear()
-        critic_value_pos_history_next.clear()
+    action_pos_probs_history_next.clear()
+    critic_value_pos_history_next.clear()
 
-        rewards_history.clear()
+    rewards_history.clear()
 
     # Log details
     episode_count += 1
@@ -601,6 +608,20 @@ while True:  # Run until solved
     if running_reward > 195:  # Condition to consider the task solved
         print("Solved at episode {}!".format(episode_count))
         break
+
+
+import pickle
+
+# File path to save the array
+file_path = "rewards_array_data.pkl"
+
+# Dumping the array into a file using pickle
+with open(file_path, 'wb') as f:
+    pickle.dump(rewards2save, f)
+
+print("Array saved successfully!")
+
+
 
 
 """
